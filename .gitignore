@@ -1,0 +1,7 @@
+node_modules/
+.env
+certs/
+*.credentials
+.claude/settings.local.json
+pyodide-cache/
+.DS_Store

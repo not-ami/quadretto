@@ -1,0 +1,13 @@
+[Unit]
+Description=Quadretto — appunti e quaderni (porta 8790 su Tailscale)
+After=network-online.target postgresql.service
+
+[Service]
+WorkingDirectory=%h/apps/quadretto/server
+ExecStart=%h/node26/bin/node server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

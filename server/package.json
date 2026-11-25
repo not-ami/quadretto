@@ -1,0 +1,22 @@
+{
+  "name": "quadretto-server",
+  "version": "2026.11.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "5.2.6",
+    "@fontsource-variable/space-grotesk": "5.2.8",
+    "@highlightjs/cdn-assets": "11.11.1",
+    "dompurify": "3.2.6",
+    "fflate": "0.8.3",
+    "katex": "0.16.22",
+    "marked": "15.0.12",
+    "pdfjs-dist": "6.5.438",
+    "pg": "8.16.3",
+    "pyodide": "314.0.8"
+  }
+}

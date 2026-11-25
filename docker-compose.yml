@@ -1,0 +1,40 @@
+# Quadretto with PostgreSQL. Copy .env.example to .env, set POSTGRES_PASSWORD, then: docker compose up -d
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quadretto
+      POSTGRES_USER: quadretto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quadretto -d quadretto"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGDATABASE: quadretto
+      PGUSER: quadretto
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-0}
+      HTTPS_URL: ${HTTPS_URL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+    # Only this computer by default: put an HTTPS proxy in front (see README) before opening it to others.
+    ports:
+      - "${QUADRETTO_BIND:-127.0.0.1}:${QUADRETTO_PORT:-8790}:8790"
+    volumes:
+      - pyodide-cache:/app/pyodide-cache
+
+volumes:
+  db:
+  pyodide-cache:
