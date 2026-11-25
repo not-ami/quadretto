@@ -1,8 +1,14 @@
-# Quadretto
+<p align="center">
+  <img src="public/icons/icon.svg" alt="Quadretto logo" width="128" height="128">
+</p>
 
-**The notebook for computer-science students, with the Apple Pencil.**
-Handwriting, Markdown and LaTeX, runnable code (Python, JavaScript, C and C++) and course tools in the same page —
-self-hosted, multi-user, and usable offline as a web app on the iPad.
+<h1 align="center">Quadretto</h1>
+
+<p align="center">
+  <b>The notebook for computer-science students, with the Apple Pencil.</b><br>
+  Handwriting, Markdown and LaTeX, runnable code (Python, JavaScript, C and C++) and course tools in the same page —<br>
+  self-hosted, multi-user, and usable offline as a web app on the iPad.
+</p>
 
 > The interface is in **English** (default) and **Italian**. Some identifiers, diagram keywords and code samples are
 > still Italian: Quadretto was born as one student's notebook for a Computer Engineering degree in Italy.
