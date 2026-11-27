@@ -10,8 +10,8 @@
   self-hosted, multi-user, and usable offline as a web app on the iPad.
 </p>
 
-> **Beta.** Quadretto is used day to day for real lecture notes, but so far by very few people and setups. Expect rough
-> edges, keep backups of your database, and please [report what breaks](https://github.com/not-ami/quadretto/issues).
+> **Beta.** Born for real lecture notes on the iPad, complete when you pair it with a computer, and still growing. Ideas and bug reports are welcome in the
+> [issues](https://github.com/not-ami/quadretto/issues).
 
 > The interface is in **English** (default) and **Italian**. Some identifiers, diagram keywords and code samples are
 > still Italian: Quadretto was born as one student's notebook for a Computer Engineering degree in Italy.
