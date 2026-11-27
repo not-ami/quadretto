@@ -2325,7 +2325,11 @@ setInterval(() => { if (app.dataset.home === 'on' && penQuiet()) renderHome(); }
 // Chi apre Quadretto per la prima volta su questo dispositivo non ha «novità»: le ha appena viste tutte.
 // Due segni distinti: il popup compare una volta sola, il pallino resta finché non apri «Novità».
 if (ls.get('seenVersion', null) == null && !['prefs', 'layout', 'ink-prefs', 'onboarded', 'side'].some((k) => localStorage.getItem(k) != null)) { ls.set('seenVersion', VERSION); ls.set('popupVersion', VERSION); }
-const verNum = (v) => String(v || '0').split('.').map(Number).reduce((a, n) => a * 1000 + (n || 0), 0);
+// AAAA.MM.N, con la lettera delle revisioni (2026.11.8 è la «A», poi 2026.11.8-B, -C…): 8 < 8-B < 9
+const verNum = (v) => {
+  const [num, rev] = String(v || '0').split('-');
+  return num.split('.').map(Number).reduce((a, n) => a * 1000 + (n || 0), 0) * 100 + (rev ? rev.charCodeAt(0) - 64 : 1);
+};
 function hasNews() { const seen = ls.get('seenVersion', null); return verNum(seen) < verNum(VERSION) && CHANGELOG.some((c) => verNum(c.v) > verNum(seen)); }
 function renderNewsBadge() { const on = hasNews(); document.querySelectorAll('.news-dot').forEach((d) => { d.hidden = !on; }); }
 // Popup al primo accesso dopo un aggiornamento: solo le frasi brevi, niente dettagli

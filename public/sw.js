@@ -1,6 +1,6 @@
 // Quadretto — service worker: l'interfaccia si apre anche senza rete.
 // I dati degli appunti li gestisce l'app (IndexedDB + coda verso il server).
-const VERSION = 'quadretto-2026.11.8'; // aggiornato da deploy.sh
+const VERSION = 'quadretto-2026.11.8-B'; // aggiornato da deploy.sh
 // build: 2026-11-24, multilingua (i18n.js, lang/en.js) — cambia il file, così il service worker ricarica i file anche a parità di versione
 const IMG = 'quadretto-img'; // foto e PDF sono immutabili: la loro cache sopravvive agli aggiornamenti
 const SHELL = [

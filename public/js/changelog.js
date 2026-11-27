@@ -5,6 +5,12 @@
 // (app.js li traduce quando li mostra). Controllo: node scripts/i18n-mancanti.mjs --novita
 export const CHANGELOG = [
   {
+    v: '2026.11.8-B', date: '2026-11-27',
+    items: [
+      ['Componenti interni aggiornati', 'Aggiornate le librerie che mostrano testo, formule e codice, con alcune falle di sicurezza chiuse. Gli aggiornamenti futuri arrivano al dispositivo senza restare indietro.', 'Componenti aggiornati: più sicurezza.'],
+    ],
+  },
+  {
     v: '2026.11.8', date: '2026-11-25',
     items: [
       ['La vista panoramica non perde più quello che scrivi', 'Scrivendo nella vista panoramica la pagina non si ricarica più da sola e quello che scrivi resta salvato. Ruotando l\'iPad la scrittura resta della stessa grandezza.', 'La vista panoramica non perde più quello che scrivi'],

@@ -1639,4 +1639,7 @@ export default {
   'Ora puoi condividere quaderni e appunti con altre persone.': 'You can now share notebooks and notes with other people.',
   'Link da leggere': 'Read-only links',
   'Un link apre l\'appunto o il quaderno come pagina da leggere o stampare, senza account, e scade dopo il numero di giorni che scegli. Funziona dentro la tua rete privata.': 'A link opens the note or the notebook as a page to read or print, without an account, and expires after the number of days you choose. It works inside your private network.',
+  'Componenti interni aggiornati': 'Internal components updated',
+  'Aggiornate le librerie che mostrano testo, formule e codice, con alcune falle di sicurezza chiuse. Gli aggiornamenti futuri arrivano al dispositivo senza restare indietro.': 'The libraries that display text, formulas and code have been updated, closing some security holes. Future updates now reach your device instead of staying behind.',
+  'Componenti aggiornati: più sicurezza.': 'Components updated: better security.',
 };

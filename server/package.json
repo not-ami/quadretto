@@ -1,6 +1,6 @@
 {
   "name": "quadretto-server",
-  "version": "2026.11.8",
+  "version": "2026.11.8-B",
   "private": true,
   "type": "module",
   "scripts": {
