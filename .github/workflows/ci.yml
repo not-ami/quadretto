@@ -12,6 +12,7 @@ jobs:
   test:
     name: API tests (PostgreSQL 17)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17-alpine
@@ -43,6 +44,7 @@ jobs:
   docker:
     name: Docker image builds
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t quadretto:ci .

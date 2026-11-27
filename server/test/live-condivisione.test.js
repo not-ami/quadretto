@@ -1,6 +1,6 @@
 // Prove del live (Yjs su WebSocket) e della condivisione, con un PostgreSQL vero usa e getta (2026-11-24, punti 7-10).
 //   docker run -d --rm --name qlive-pg -e POSTGRES_PASSWORD=prova -p 127.0.0.1:55611:5432 postgres:17-alpine
-//   docker exec qlive-pg psql -U postgres -c "create database quadretto_live" -c "create database quadretto_fed"
+//   docker exec qlive-pg psql -U postgres -c "create database quadretto_live"      # quadretto_fed lo crea il test
 //   cd server && PGHOST=127.0.0.1 PGPORT=55611 PGUSER=postgres PGPASSWORD=prova PGDATABASE=quadretto_live node --test test/live-condivisione.test.js
 // È anche la prova d'isolamento estesa: senza condivisione l'altro account non vede nulla, con «può leggere» non scrive,
 // la revoca vale subito (anche sul WebSocket aperto), i link scadono e si revocano.
@@ -287,9 +287,13 @@ test('link in sola lettura: si apre senza account, scade e si revoca', async () 
 test('federazione (prototipo): invito firmato mario@altro-server e lettura tramite il proprio server', async () => {
   const pA = 21000 + Math.floor(Math.random() * 9000), pB = pA + 10000;
   const nA = `127.0.0.1:${pA}`, nB = `127.0.0.1:${pB}`;
-  const fa = await avvia({ FEDERATION_NAME: nA, FEDERATION_PEERS: nB, FEDERATION_INSECURE: '1' }, pA);
-  const fb = await avvia({ PGDATABASE: 'quadretto_fed', FEDERATION_NAME: nB, FEDERATION_PEERS: nA, FEDERATION_INSECURE: '1' }, pB);
+  // il secondo server vuole un database suo: lo crea il test (in CI esiste solo quello di PGDATABASE)
+  await db.query('create database quadretto_fed').catch((e) => { if (e.code !== '42P04') throw e; }); // 42P04: c'è già
+  let fa, fb;
   try {
+    // dentro il try: se il secondo non parte, il primo va spento lo stesso (se resta acceso, i test non finiscono mai)
+    fa = await avvia({ FEDERATION_NAME: nA, FEDERATION_PEERS: nB, FEDERATION_INSECURE: '1' }, pA);
+    fb = await avvia({ PGDATABASE: 'quadretto_fed', FEDERATION_NAME: nB, FEDERATION_PEERS: nA, FEDERATION_INSECURE: '1' }, pB);
     const wk = await (await fetch(`${fa.url}/.well-known/quadretto`)).json();
     assert.equal(wk.federation, true); assert.equal(wk.alg, 'ed25519');
     const FA = client(fa.url), FB = client(fb.url);
