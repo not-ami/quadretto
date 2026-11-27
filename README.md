@@ -10,6 +10,9 @@
   self-hosted, multi-user, and usable offline as a web app on the iPad.
 </p>
 
+> **Beta.** Quadretto is used day to day for real lecture notes, but so far by very few people and setups. Expect rough
+> edges, keep backups of your database, and please [report what breaks](https://github.com/not-ami/quadretto/issues).
+
 > The interface is in **English** (default) and **Italian**. Some identifiers, diagram keywords and code samples are
 > still Italian: Quadretto was born as one student's notebook for a Computer Engineering degree in Italy.
 
@@ -21,17 +24,22 @@
 - **Block notes**: text, handwriting and photos in the same sheet; page templates (lecture, exercise, proof);
   links between notes (`[[title]]`) with backlinks.
 - **Text**: Markdown, LaTeX formulas (KaTeX), syntax-highlighted code, checklists, definition/theorem boxes.
-- **Handwriting** with the Apple Pencil: low-latency ink, pressure, highlighter, eraser, undo/redo, grid/lined/dotted
-  paper; shapes that straighten when you hold the tip still; a shape tool with a Cartesian plane; lasso selection;
-  pinch to zoom and an overview of the pages.
-- **PDF**: import a PDF and annotate it with the Pencil.
+- **Handwriting** with the Apple Pencil: low-latency ink whose width follows your stroke, highlighter, eraser,
+  undo/redo, grid/lined/dotted paper; shapes that straighten when you hold the tip still; a shape tool with a Cartesian
+  plane; lasso selection; pinch to zoom and an overview of the pages.
+- **PDF**: import a PDF and annotate it with the Apple Pencil; print a note or a whole notebook to PDF, with a cover
+  and a table of contents.
 - **Runnable code**: multi-file projects in the note. Python (Pyodide) and JavaScript run in the browser, in workers,
-  even offline; C and C++ compile on the server inside a sandbox. Import and export as zip or from public GitHub repositories,
+  offline too once loaded; C and C++ compile on the server inside a sandbox. Import and export as zip or from public GitHub repositories,
   and a full-screen IDE mode.
 - **Course tools** for Operating Systems: CPU scheduling, mutex and starvation simulators, charts and OS diagrams.
+- **Live across devices**: the same note open on two devices stays in step (CRDT, [Yjs](https://github.com/yjs/yjs)),
+  with presence and cursors; edits made offline are merged when you reconnect.
 - **Offline first**: every change is saved on the device (IndexedDB) and synced to the server from a queue; version
   history and a 30-day trash.
-- **Multi-user**: every account sees only its own data.
+- **Multi-user and sharing**: every account's data is private until its owner shares it. Share a note or a notebook
+  with another account on the same server (read or edit), or create a read-only link that expires (1–90 days).
+- **Federation** between Quadretto servers is an **experimental prototype**, off by default.
 
 ## Quick start (Docker)
 
@@ -51,7 +59,7 @@ put it behind HTTPS (below).
 
 Safari keeps a web app working offline only in a secure context, so serve Quadretto over HTTPS, for example:
 
-- **Tailscale**: `tailscale serve --bg --https=8791 http://127.0.0.1:8790` (only your devices can reach it);
+- **Tailscale**: `tailscale serve --bg --https=8791 http://127.0.0.1:8790` (only devices in your tailnet can reach it);
 - **Caddy** on a domain you own: `quadretto.example.com { reverse_proxy 127.0.0.1:8790 }`.
 
 Then on the iPad: open the address in Safari → Share → **Add to Home Screen**.
@@ -86,6 +94,7 @@ Environment variables (or a `.env` file next to `server/`):
 | `RUN_SANDBOX` | `off` | `bwrap` turns on C/C++ execution (Linux, needs `bubblewrap`) |
 | `HTTPS_URL` | — | your HTTPS address; visitors of the plain-HTTP address see a banner pointing to it |
 | `TRUST_PROXY` | — | IPs of a reverse proxy in front (comma-separated), so login limits see real client addresses |
+| `FEDERATION_NAME`, `FEDERATION_PEERS` | — | **experimental**: this server's public name and the only servers it talks to (comma-separated). Leave unset |
 
 ## Running C and C++ safely
 
@@ -102,9 +111,13 @@ cd server && npm ci
 PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=... PGDATABASE=quadretto_test npm test
 ```
 
+Use a throw-away database server: the tests write data, and one of them creates a second database (`quadretto_fed`), so
+the user needs the right to create databases.
+
 The front end is plain JavaScript modules with no build step (`public/`); the server is Node.js with no framework
 (`server/`). Main pieces: `public/js/app.js` (interface), `ink.js` (handwriting), `store.js` (local storage and sync
-queue), `md.js` (Markdown and LaTeX), `code.js` (runnable code); `server/server.js` (API), `auth.js`, `run.js` (sandbox).
+queue), `md.js` (Markdown and LaTeX), `code.js` (runnable code), `live.js` and `ydoc.js` (live editing); `server/server.js`
+(API and permissions), `auth.js`, `live.js` (WebSocket), `run.js` (sandbox).
 
 ## Contributing
 
@@ -115,3 +128,9 @@ Bug reports and ideas are welcome as issues. Pull requests need the [Contributor
 
 [GNU AGPL-3.0](LICENSE). You may use, modify and share Quadretto; if you run a modified version for other people
 over a network, you must offer them its source code. Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Trademarks
+
+Apple, iPad, Apple Pencil, Mac and Safari are trademarks of Apple Inc., registered in the U.S. and other countries and
+regions. Other names, such as Tailscale, GitHub, Docker and PostgreSQL, belong to their respective owners. Quadretto
+is an independent project, not affiliated with or endorsed by any of them.
