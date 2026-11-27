@@ -1,6 +1,6 @@
 // Quadretto — compila ed esegue programmi C e C++ dei progetti degli appunti, in una gabbia.
 //
-// Gabbia (sul Debian): bubblewrap senza rete né processi esterni visibili, con /usr in sola lettura e una
+// Gabbia (su Linux): bubblewrap senza rete né processi esterni visibili, con /usr in sola lettura e una
 // cartella di lavoro usa e getta; dentro, limiti di CPU, memoria e file (ulimit). Se c'è `systemd-run`,
 // tutto gira anche in uno scope dell'utente con TasksMax e MemoryMax, contro i fork infiniti.
 // Sullo stesso server possono girare altri servizi: senza bubblewrap l'esecuzione è spenta, non «aperta».
@@ -55,11 +55,11 @@ function bwrapArgs(dir, env = {}) {
   const a = ['--unshare-all', '--die-with-parent', '--new-session', '--ro-bind', '/usr', '/usr'];
   for (const d of ['/bin', '/lib', '/lib64', '/sbin']) {
     let st; try { st = fs.lstatSync(d); } catch { continue; }
-    if (st.isSymbolicLink()) a.push('--symlink', fs.readlinkSync(d), d); // Debian con /usr unificato
+    if (st.isSymbolicLink()) a.push('--symlink', fs.readlinkSync(d), d); // distribuzioni con /usr unificato
     else a.push('--ro-bind', d, d);
   }
   for (const f of ['/etc/ld.so.cache', '/etc/alternatives']) if (fs.existsSync(f)) a.push('--ro-bind', f, f);
-  // niente /proc: sul Debian (contenitore LXC) bubblewrap non può montarlo, e a gcc e agli esercizi non serve
+  // niente /proc: dentro un contenitore LXC bubblewrap non può montarlo, e a gcc e agli esercizi non serve
   // /dev/shm della gabbia è una cartella del lavoro: alla fine si vede quali semafori e memorie condivise sono rimasti
   a.push('--dev', '/dev', '--bind', path.join(dir, '.shm'), '/dev/shm', '--tmpfs', '/tmp', '--bind', dir, '/work', '--chdir', '/work',
     '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin', '--setenv', 'HOME', '/work', '--setenv', 'LANG', 'C.UTF-8', '--setenv', 'TMPDIR', '/tmp');

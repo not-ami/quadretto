@@ -108,7 +108,7 @@ const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const NOTE_META = `id, notebook_id, kind, title, plain, tags, pinned, paper, has_ink, rev, created_at, updated_at, deleted_at`;
 const NB_COLS = `id, title, code, color, year, to_char(exam_date,'YYYY-MM-DD') AS exam_date, position, archived, legend, kind, created_at, updated_at`;
 // Valori predefiniti sicuri (2026-11-24, pubblicazione su GitHub): niente proprietario e registrazione chiusa se non
-// li si chiede nel .env. Il Debian li ha scritti nel suo .env (deploy.sh controlla che ci siano).
+// li si chiede nel .env. Chi aggiorna un'installazione di prima deve scriverli lì.
 const OWNER = String(process.env.OWNER_USERNAME || '').trim().toLowerCase();
 const ALLOW_SIGNUP = process.env.ALLOW_SIGNUP === '1';
 const NB_KINDS = new Set(['', 'code', 'plain']);

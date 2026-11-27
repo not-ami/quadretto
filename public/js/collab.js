@@ -368,7 +368,7 @@ export async function shareSheet(kind, target) {
       h('button', { type: 'button', class: 'btn primary', onclick: add }, t('Condividi'))),
     rows.length ? h('div', { class: 'field' }, h('span', {}, t('Condiviso con')), ...rows) : null,
     canLink ? h('div', { class: 'field' }, h('span', {}, t('Link in sola lettura')),
-      h('p', { class: 'muted' }, t('Chi ha il link vede {cosa} come pagina da leggere o stampare, senza account. Funziona solo dentro la tua rete privata (Tailscale).', { cosa: kindLabel(kind) })),
+      h('p', { class: 'muted' }, t('Chi ha il link vede {cosa} come pagina da leggere o stampare, senza account. Funziona solo da dove questo server è raggiungibile.', { cosa: kindLabel(kind) })),
       h('div', { class: 'share-row' }, days, h('button', { type: 'button', class: 'btn', onclick: async () => {
         try {
           const l = await api('POST', '/api/links', { kind, target_id: target.id, days: Number(days.value) });

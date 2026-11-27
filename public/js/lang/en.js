@@ -1594,7 +1594,7 @@ export default {
   'Aggiungi una persona di questo server': 'Add a person on this server',
   'Condividi': 'Share',
   'Condiviso con': 'Shared with',
-  'Chi ha il link vede {cosa} come pagina da leggere o stampare, senza account. Funziona solo dentro la tua rete privata (Tailscale).': 'Anyone with the link sees {cosa} as a page to read or print, without an account. It only works inside your private network (Tailscale).',
+  'Chi ha il link vede {cosa} come pagina da leggere o stampare, senza account. Funziona solo da dove questo server è raggiungibile.': 'Anyone with the link sees {cosa} as a page to read or print, without an account. It only works from where this server can be reached.',
   'Link copiato: scade tra {n} giorni': 'Link copied: it expires in {n} days',
   'Copia il link': 'Copy the link',
   'Crea e copia il link': 'Create and copy the link',

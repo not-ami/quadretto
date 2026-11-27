@@ -1,7 +1,7 @@
 // Quadretto — PDF «con stile» (2026.11.7): vista di stampa impaginata da noi, poi Stampa → Salva in PDF di iPadOS.
 // Richiesta utente (2026-11-24): «Stampa/Esportazione di una nota PDF "con stile": copertina, design scelto dall'utente,
 // armonia ed eleganza tra le pagine, contestualizzate alla scolasticità». Scelta: vista di stampa nell'app (offline) +
-// versione dal Debian con Chromium (la seconda arriva dopo: vedi TODO).
+// versione dal server con Chromium (la seconda arriva dopo: vedi TODO).
 // Le pagine A4 le facciamo noi (Safari non numera le pagine e non sa fare l'indice): così numeri di pagina, intestazioni
 // e indice sono veri. La scrittura a mano diventa SVG (inkToSvg): resta vettoriale nel PDF.
 // Qui t è anche una variabile locale: la traduzione si chiama T() (vedi i18n.js).
