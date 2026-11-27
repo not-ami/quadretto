@@ -1452,3 +1452,41 @@ html.pv-open { overflow: hidden; }
 .auth-lang { display: flex; justify-content: center; gap: 4px; margin-top: 18px; }
 .auth-lang button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 0; background: none; color: var(--muted, #888); cursor: pointer; }
 .auth-lang button.on { color: inherit; background: var(--chip, rgba(127,127,127,.14)); font-weight: 600; }
+
+/* --- 2026-11-24: live, presenza e condivisione (collab.js) ------------------------------------------------- */
+.ed-peers { display: inline-flex; align-items: center; gap: 0; margin: 0 6px; min-height: 26px; }
+.ed-peers::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); margin-right: 6px; }
+.ed-peers[data-live="on"]::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+.peer { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--c); color: #fff; font: 600 11px/1 var(--font-display); border: 2px solid var(--surface); margin-left: -6px; flex: none; }
+.ed-peers .peer:first-child { margin-left: 0; }
+.peer.self { background: var(--surface); color: var(--c); box-shadow: inset 0 0 0 2px var(--c); }
+.peer-caret { position: absolute; width: 2px; background: var(--c); pointer-events: none; z-index: 4; border-radius: 1px; }
+.peer-caret > span { position: absolute; left: -1px; bottom: 100%; white-space: nowrap; background: var(--c); color: #fff; font: 600 10px/1.5 var(--font-body); padding: 0 5px; border-radius: 4px 4px 4px 0; }
+.block { position: relative; }
+.peer-tags { position: absolute; right: 6px; top: -10px; z-index: 3; display: flex; gap: 4px; pointer-events: none; }
+.peer-tag { background: var(--c); color: #fff; font: 600 10px/1.6 var(--font-body); padding: 0 6px; border-radius: 6px; pointer-events: none; }
+.ink-peer { position: absolute; z-index: 3; transform: translate(6px, -100%); white-space: nowrap; background: var(--c); color: #fff; font: 600 11px/1.6 var(--font-body); padding: 0 7px; border-radius: 6px 6px 6px 0; pointer-events: none; animation: ink-peer-in .18s ease-out; }
+@keyframes ink-peer-in { from { opacity: 0; transform: translate(6px, -80%); } }
+@media (prefers-reduced-motion: reduce) { .ink-peer { animation: none; } }
+.shared-chip { font: 500 12px/1 var(--font-body); color: var(--muted); background: var(--surface-2); border-radius: 999px; padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.nb-owner { color: var(--faint); font-weight: 400; }
+.page.readonly .ro-title { border: 0; resize: none; margin: 0 0 4px; }
+.ro-banner { color: var(--muted); font-size: 13px; margin: 0 0 18px; padding: 8px 12px; background: var(--surface-2); border-radius: 10px; }
+.ro-block { margin: 0 0 14px; }
+.ro-ink canvas { width: 100%; height: auto; display: block; }
+.ro-tool { color: var(--muted); font-style: italic; }
+.share-hits { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+.share-hit { display: flex; gap: 8px; align-items: baseline; text-align: left; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 0; color: var(--ink); font: inherit; min-height: var(--tap); }
+.share-hit small, .share-who small { color: var(--muted); }
+.share-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); min-height: var(--tap); }
+.share-row:last-child { border-bottom: 0; }
+.share-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.share-row .peer { margin-left: 0; }
+.shared-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.shared-item { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; text-align: left; padding: 10px 12px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); color: var(--ink); font: inherit; min-height: var(--tap); }
+.shared-item .nb-code { grid-row: span 2; }
+.shared-item small { color: var(--muted); }
+.shared-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-row select { width: auto; flex: none; max-width: 46%; }
+.share-row .btn { flex: none; white-space: nowrap; }
+.share-row > select:first-child { flex: 1; max-width: none; }

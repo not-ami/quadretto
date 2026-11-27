@@ -801,6 +801,21 @@ export function renderCodeBlock(b, ctx) {
   else root.append(head, themeMenu, importBox, tabs, refCard, cmpHint, edit, cmpBar, fileTools, stdinBox, r.bar, r.out, r.extra);
   root.addEventListener('click', (e) => e.stopPropagation());
   root.refreshIde = () => { drawIde(); if (ideName) ideName.textContent = ctx.repoName?.() || ''; lines = 0; requestAnimationFrame(size); };
+  // 2026-11-24 (live): il progetto è cambiato su un altro dispositivo o per un'altra persona. Si ridisegna senza perdere
+  // il cursore: sel = { a, b } già spostati da live.js sul testo nuovo (se no si tengono gli indici di prima).
+  root.dataset.block = b.id || '';
+  root.codeTa = ta;
+  root.codeFile = () => b.open;
+  root.liveRefresh = (sel) => {
+    if (!b.files.find((f) => f.path === b.open)) b.open = b.files[0]?.path || null;
+    if (document.activeElement !== name) name.value = b.name || '';
+    if (document.activeElement !== stdin) stdin.value = b.stdin || '';
+    const focused = document.activeElement === ta;
+    const st = ta.scrollTop, sl = ta.scrollLeft, a = sel?.a ?? ta.selectionStart, z = sel?.b ?? ta.selectionEnd;
+    draw();
+    if (focused) { ta.focus({ preventScroll: true }); try { ta.setSelectionRange(a, z); } catch {} }
+    ta.scrollTop = st; ta.scrollLeft = sl;
+  };
   draw();
   return root;
 }

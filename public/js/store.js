@@ -1,6 +1,9 @@
 // Archivio locale (IndexedDB) + sincronizzazione con il server Postgres.
 // Ogni modifica viene prima scritta sul dispositivo, poi inviata al server da una coda:
 // se la rete cade non si perde nulla, e la coda riparte da sola.
+// 2026-11-24 (live): gli appunti che su questo dispositivo hanno già il documento Yjs (live.js) non passano più dal PUT
+// della coda: le loro modifiche vanno al server come aggiornamenti CRDT. Qui resta la copia locale per elenchi e ricerca.
+import { plainOf } from './ydoc.js';
 import * as i18n from './i18n.js';
 
 // Un archivio locale per account: il proprietario tiene quello storico, gli altri uno proprio
@@ -55,19 +58,8 @@ export async function api(method, url, body, headers = {}, { timeout = 20000 } =
   return data;
 }
 
-// Testo semplice di un appunto, per ricerca e anteprime
-export function plainOf(note) {
-  const parts = [];
-  for (const b of note.blocks || []) {
-    if (b.type === 'text') parts.push(b.text || '');
-    else if (b.type === 'image' && b.caption) parts.push(b.caption);
-    else if (b.type === 'ink' && b.ptext) parts.push(b.ptext); // testo della pagina PDF (per la ricerca)
-    else if (b.type === 'tool') parts.push(String(b.src || '').slice(0, 20000));
-    else if (b.type === 'chart') parts.push([b.title || '', String(b.src || '').slice(0, 8000)].join('\n'));
-    else if (b.type === 'code') parts.push([b.name || '', ...(b.files || []).map((f) => f.path + '\n' + (f.text || '').slice(0, 4000))].join('\n').slice(0, 20000));
-  }
-  return parts.join('\n').trim();
-}
+// Testo semplice di un appunto, per ricerca e anteprime: sta in ydoc.js perché lo usa anche il server (live)
+export { plainOf };
 
 class Store extends EventTarget {
   notebooks = [];
@@ -271,19 +263,39 @@ class Store extends EventTarget {
     return { id: uuid(), notebook_id: notebookId || null, kind, title: '', blocks: [], plain: '', tags: [], pinned: false, paper: 'grid', has_ink: false, rev: 0, created_at: now, updated_at: now, deleted_at: null };
   }
 
+  liveOwns = () => false; // live.js lo imposta: true se l'appunto viaggia come documento Yjs
+
   async saveNote(note) {
     note.plain = plainOf(note);
     note.has_ink = note.blocks.some((b) => b.type === 'ink' && b.strokes?.length);
     note.updated_at = new Date().toISOString();
+    if (this.liveOwns(note.id) && note.rev > 0) {
+      // le modifiche le porta il live: qui solo la copia locale (anteprime, ricerca offline, apertura senza rete)
+      const copy = structuredClone(note);
+      copy._dirty = false;
+      if (idb) await idbPut('notes', copy);
+      const meta = this.metaOf(copy);
+      const prev = this.notes.get(note.id);
+      if (prev?.shared) meta.shared = prev.shared;
+      this.notes.set(note.id, meta);
+      this.emit('notes');
+      return;
+    }
     note._dirty = true;
     note._ver = (note._ver || 0) + 1;
     const copy = structuredClone(note);
     if (idb) await idbPut('notes', copy);
     const meta = this.metaOf(copy); meta._local = true;
+    const prev = this.notes.get(note.id);
+    if (prev?.shared && !meta.shared) meta.shared = prev.shared;
     this.notes.set(note.id, meta);
     this.emit('notes');
     await this.enqueue({ kind: 'put', id: note.id, note: idb ? undefined : copy });
   }
+
+  // ci sono PUT in coda per questo appunto? (live.js aspetta che partano prima di entrare nella stanza)
+  async hasPendingPut(id) { return idb ? (await idbAll('outbox')).some((o) => o.kind === 'put' && o.id === id) : false; }
+  async dropPendingPut(id) { if (!idb) return; for (const o of await idbAll('outbox')) if (o.kind === 'put' && o.id === id) await idbDel('outbox', o.seq); this.pending = (await idbAll('outbox')).length; this.emit('status'); }
 
   async patchNote(id, fields) {
     const m = this.notes.get(id);

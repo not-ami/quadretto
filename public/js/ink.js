@@ -1429,6 +1429,29 @@ export class InkBoard {
     this.sel = null;
   }
 
+  // --- 2026-11-24 (live): tratti arrivati da un altro dispositivo o da un'altra persona ----------------------------
+  // prev = l'elenco dei tratti prima dell'arrivo. Se sono stati solo aggiunti in fondo si disegnano solo quelli nuovi,
+  // altrimenti si ridisegna la tavola. La chiama l'app a penna ferma (punto di sincronia di live.js).
+  liveApply(prev, prevH) {
+    if (prevH !== this.block.h) { this.resize(); return; }
+    const now = this.block.strokes;
+    if (this.sel && this.sel.strokes.some((s) => !now.includes(s))) this.deselect();
+    const appended = prev && prev.length <= now.length && prev.every((s, i) => now[i] === s);
+    if (appended && this.scale && this.awake) { for (let i = prev.length; i < now.length; i++) drawStroke(this.ctx, this.view(now[i]), this.scale); }
+    else this.redraw();
+  }
+  // etichetta «Mario sta scrivendo» dove scrive un altro (x, y in unità della tavola); p = null la toglie
+  peerMark(id, p) {
+    this.marks ||= new Map();
+    let el = this.marks.get(id);
+    if (!p) { el?.remove(); this.marks.delete(id); return; }
+    if (!el) { el = document.createElement('div'); el.className = 'ink-peer'; el.setAttribute('aria-hidden', 'true'); this.el.append(el); this.marks.set(id, el); }
+    el.textContent = p.label;
+    el.style.setProperty('--c', p.color);
+    el.style.left = `${Math.round(p.x * (this.scale || 1))}px`;
+    el.style.top = `${Math.round(p.y * (this.scale || 1))}px`;
+  }
+
   destroy() { this.ro.disconnect(); this.io?.disconnect(); this.cancelPage?.(); clearTimeout(this.pageTimer); this.deselect(); }
   // per provare lo zoom senza un iPad (console): board.setZoom(2)
 }

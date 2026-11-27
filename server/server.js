@@ -1,4 +1,5 @@
 // Quadretto — server HTTP(S) + API su PostgreSQL. Nessun framework: solo node:http e pg.
+import './env.js'; // per primo: carica il .env prima che run.js e federation.js leggano le variabili
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -9,11 +10,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { runProject, runInfo } from './run.js';
 import { tr } from '../public/js/i18n.js'; // stesso dizionario dell'interfaccia: i messaggi d'errore nella lingua dell'utente
+import { startLive } from './live.js';
+import * as fed from './federation.js';
 import { COOKIE, SESSION_DAYS, proxyInfo, hashPassword, checkPassword, newToken, tokenHash, readCookie, sessionCookie, clearCookie, validUsername, validPassword, tooManyAttempts, noteFailure, clearFailures } from './auth.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(ROOT, '..');
-try { process.loadEnvFile(path.join(APP, '.env')); } catch {}
 const VERSION = (() => { try { return fs.readFileSync(path.join(APP, 'VERSION'), 'utf8').trim(); } catch { return 'sviluppo'; } })();
 
 const HOST = process.env.HOST || '127.0.0.1';
@@ -38,7 +40,8 @@ const VENDOR = {
   'font-mono/': path.join(NM, '@fontsource-variable/jetbrains-mono/'),
   'pyodide/': path.join(NM, 'pyodide/'),
   'fflate/': path.join(NM, 'fflate/esm/'),
-  'pdfjs/': path.join(NM, 'pdfjs-dist/'),   // 2026.11.6: PDF da annotare (build/, wasm/, cmaps/, standard_fonts/)
+  'pdfjs/': path.join(NM, 'pdfjs-dist/'),
+  'yjs/': path.join(PUBLIC, 'vendor/'),     // 2026-11-24: Yjs + y-protocols in un unico ESM (scripts/prepara-yjs.mjs)   // 2026.11.6: PDF da annotare (build/, wasm/, cmaps/, standard_fonts/)
 };
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -129,9 +132,25 @@ const ipOf = (req) => proxyInfo(req, SELF).ip;
 const reqLang = (req) => { const l = req.headers['x-lang'] || req.user?.settings?.lang; return l === 'it' ? 'it' : 'en'; };
 const secureReq = (req) => tls || proxyInfo(req, SELF).viaProxy;
 
+// --- permessi (2026-11-24, punto 9: condivisione) -------------------------------------------------------------
+// Il controllo unico: can(utente, azione, tipo, id) → il ruolo ('owner' | 'edit' | 'read'), altrimenti un errore.
+// azione 'read' = leggere, 'edit' = modificare, 'own' = solo il proprietario (condividere, spostare, cancellare).
+// Chi non può nemmeno leggere riceve 404 come se la risorsa non esistesse (non si rivela che c'è).
+const noteRole = async (uid, id) => (UUID.test(id || '') ? (await q('select note_role($1, $2) as r', [uid, id])).rows[0]?.r || null : null);
+const notebookRole = async (uid, id) => (UUID.test(id || '') ? (await q('select notebook_role($1, $2) as r', [uid, id])).rows[0]?.r || null : null);
+const RANK = { read: 1, edit: 2, owner: 3 };
+const NEED = { read: 1, edit: 2, own: 3 };
+async function can(user, action, kind, id, { missing } = {}) {
+  const role = kind === 'notebook' ? await notebookRole(user.id, id) : await noteRole(user.id, id);
+  if (!role) { if (missing) return null; throw notFound(kind === 'notebook' ? 'Quaderno non trovato' : 'Appunto non trovato'); }
+  if (RANK[role] < NEED[action]) throw Object.assign(new Error(action === 'edit' ? 'Hai solo il permesso di leggere' : 'Solo il proprietario può farlo'), { status: 403 });
+  return role;
+}
+
 // --- API --------------------------------------------------------------------
 // route(metodo, percorso, fn, { public: true }) — senza public serve una sessione: fn riceve req.user
 const routes = [];
+let live = null; // server/live.js, avviato insieme al server (in fondo al file)
 const route = (method, pattern, fn, opts = {}) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), fn, pub: !!opts.public });
 
 const publicUser = (u) => ({ id: u.id, username: u.username, display_name: u.display_name || u.username, is_owner: u.is_owner });
@@ -208,7 +227,7 @@ route('POST', '/api/auth/register', async (req, _p, res) => {
 
 route('POST', '/api/auth/logout', async (req, _p, res) => {
   const tok = readCookie(req);
-  if (tok) await q('delete from sessions where token_hash = $1', [tokenHash(tok)]);
+  if (tok) { await q('delete from sessions where token_hash = $1', [tokenHash(tok)]); live?.dropSessions((h) => h === tokenHash(tok)); }
   res.setHeader('Set-Cookie', clearCookie(secureReq(req)));
   return { ok: true };
 }, { public: true });
@@ -221,19 +240,38 @@ route('POST', '/api/auth/password', async (req) => {
   await q('update users set pass_hash = $2 where id = $1', [req.user.id, hashPassword(password)]);
   // chiudi le altre sessioni
   await q('delete from sessions where user_id = $1 and token_hash <> $2', [req.user.id, tokenHash(readCookie(req))]);
+  const keep = tokenHash(readCookie(req));
+  live.dropSessions((h, uid) => uid === req.user.id && h !== keep); // anche i WebSocket aperti delle altre sessioni
   return { ok: true };
 });
 
-// --- dati (sempre dell'utente collegato) ----------------------------------------
+// --- dati: dell'utente collegato e di chi gli ha condiviso qualcosa (controllo unico can(), 2026-11-24) ----------
 route('GET', '/api/bootstrap', async (req) => {
   const uid = req.user.id;
-  const [nb, notes, st, study] = await Promise.all([
+  const [nb, shNb, notes, st, study] = await Promise.all([
     q(`select ${NB_COLS} from notebooks where user_id = $1 order by position, created_at`, [uid]),
-    q(`select ${NOTE_META} from notes where user_id = $1 and (deleted_at is null or deleted_at > now() - interval '30 days') order by updated_at desc`, [uid]),
+    // quaderni condivisi con me, con il proprietario e il mio ruolo
+    q(`with b as (select ${NB_COLS}, user_id from notebooks)
+       select b.*, sh.role, u.username as owner, coalesce(nullif(u.display_name, ''), u.username) as owner_name
+         from b join (select target_id, owner_id, case when bool_or(role = 'edit') then 'edit' else 'read' end as role
+                        from shares where grantee_id = $1 and kind = 'notebook' group by target_id, owner_id) sh
+           on sh.target_id = b.id and sh.owner_id = b.user_id
+         join users u on u.id = b.user_id order by owner_name, b.title`, [uid]),
+    q(`with acc as (select id as nid, role from readable_notes($1))
+       select ${NOTE_META}, acc.role, (select coalesce(nullif(display_name, ''), username) from users u where u.id = notes.user_id) as owner_name
+         from notes join acc on acc.nid = notes.id
+        where (deleted_at is null or (acc.role = 'owner' and deleted_at > now() - interval '30 days')) order by updated_at desc`, [uid]),
     q('select settings from users where id = $1', [uid]),
     q(`select notebook_id, to_char(day, 'YYYY-MM-DD') as day, seconds from study_time where user_id = $1 and day > current_date - 40`, [uid]),
   ]);
-  return { user: publicUser(req.user), notebooks: nb.rows, notes: notes.rows, settings: st.rows[0]?.settings || {}, study: study.rows, run: runInfo(), serverTime: new Date().toISOString() };
+  const visibleNb = new Set([...nb.rows, ...shNb.rows].map((x) => x.id));
+  const sharedNb = shNb.rows.map(({ user_id, role, owner, owner_name, ...x }) => ({ ...x, shared: { role, owner, owner_name } }));
+  const outNotes = notes.rows.map(({ role, owner_name, ...n }) => {
+    if (role === 'owner') return n;
+    // un appunto condiviso da solo: il suo quaderno non lo vedi, quindi per te è «senza quaderno»
+    return { ...n, notebook_id: visibleNb.has(n.notebook_id) ? n.notebook_id : null, shared: { role, owner_name } };
+  });
+  return { user: publicUser(req.user), notebooks: [...nb.rows, ...sharedNb], notes: outNotes, settings: st.rows[0]?.settings || {}, study: study.rows, run: runInfo(), serverTime: new Date().toISOString(), live: true };
 });
 
 route('POST', '/api/notebooks', async (req) => {
@@ -264,6 +302,7 @@ route('POST', '/api/notebooks/bulk', async (req) => {
   } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
 });
 route('PATCH', '/api/notebooks/:id', async (req, p) => {
+  await can(req.user, 'own', 'notebook', p.id);
   const b = await json(req);
   const cols = ['title', 'code', 'color', 'year', 'exam_date', 'position', 'archived', 'legend', 'kind'];
   if ('legend' in b) b.legend = cleanLegend(b.legend);
@@ -282,32 +321,58 @@ route('POST', '/api/notebooks/reorder', async (req) => {
   return { ok: true };
 });
 route('DELETE', '/api/notebooks/:id', async (req, p) => {
+  await can(req.user, 'own', 'notebook', p.id);
   // gli appunti finiscono nel cestino, non spariscono
   await q(`update notes set deleted_at = now(), updated_at = now(), rev = rev + 1 where notebook_id = $1 and user_id = $2 and deleted_at is null`, [p.id, req.user.id]);
   await q('delete from notebooks where id = $1 and user_id = $2', [p.id, req.user.id]);
+  await q(`delete from shares where kind = 'notebook' and target_id = $1`, [p.id]);
   return { ok: true };
 });
 
 route('GET', '/api/notes/:id', async (req, p) => {
-  const r = await q(`select ${NOTE_META}, blocks from notes where id = $1 and user_id = $2`, [p.id, req.user.id]);
+  const role = await can(req.user, 'read', 'note', p.id);
+  const r = await q(`select ${NOTE_META}, blocks, (select coalesce(nullif(display_name, ''), username) from users u where u.id = notes.user_id) as owner_name from notes where id = $1`, [p.id]);
   if (!r.rowCount) throw notFound('Appunto non trovato');
-  return r.rows[0];
+  const { owner_name, ...n } = r.rows[0];
+  return role === 'owner' ? n : { ...n, shared: { role, owner_name } };
 });
 route('PUT', '/api/notes/:id', async (req, p) => {
   if (!UUID.test(p.id)) throw bad('Id non valido');
   const b = await json(req);
   const uid = req.user.id;
+  // esiste già? allora serve il permesso di modificarlo; se no lo si crea
+  const role = await can(req.user, 'edit', 'note', p.id, { missing: true });
+  const cur0 = (await q('select user_id, notebook_id, pinned, deleted_at, kind from notes where id = $1', [p.id])).rows[0];
+  if (cur0 && !role) throw notFound('Appunto non trovato');
+  let ownerId = cur0 ? cur0.user_id : uid;
+  let nbId = UUID.test(b.notebook_id || '') ? b.notebook_id : null;
+  if (role && role !== 'owner') {
+    // chi ha solo «può modificare» cambia il contenuto, non quaderno, cestino o «fissato»
+    Object.assign(b, { pinned: cur0.pinned, deleted_at: cur0.deleted_at, kind: cur0.kind });
+    nbId = cur0.notebook_id;
+  } else if (nbId) {
+    const nr = await notebookRole(uid, nbId);
+    // un appunto nuovo in un quaderno condiviso con «può modificare» è del proprietario del quaderno
+    if (!cur0 && nr === 'edit') ownerId = (await q('select user_id from notebooks where id = $1', [nbId])).rows[0].user_id;
+    else if (nr !== 'owner') nbId = null; // il quaderno deve essere del proprietario, altrimenti l'appunto resta senza quaderno
+  }
+  // appunto già live (documento Yjs): il contenuto si fonde nel documento, il resto va nelle colonne
+  if (cur0 && await live.isY(p.id)) {
+    const cur = (await q('select rev, title, blocks from notes where id = $1', [p.id])).rows[0];
+    const conflict = !!(b.baseRev && b.baseRev !== cur.rev);
+    if (conflict) await q('insert into note_versions (note_id, rev, title, blocks, user_id) values ($1,$2,$3,$4,$5)', [p.id, cur.rev, cur.title, JSON.stringify(cur.blocks), uid]);
+    await q('update notes set notebook_id = $2, pinned = $3, deleted_at = $4, kind = $5 where id = $1', [p.id, nbId, !!b.pinned, b.deleted_at || null, noteKind(b.kind)]);
+    await live.applyJson(p.id, b, uid);
+    const r = await q(`select ${NOTE_META} from notes where id = $1`, [p.id]);
+    return { ...r.rows[0], conflict };
+  }
   const c = await pool.connect();
   try {
     await c.query('begin');
-    // il quaderno deve essere dell'utente, altrimenti l'appunto resta senza quaderno
-    let nbId = UUID.test(b.notebook_id || '') ? b.notebook_id : null;
-    if (nbId && !(await c.query('select 1 from notebooks where id = $1 and user_id = $2', [nbId, uid])).rowCount) nbId = null;
     const cur = (await c.query('select user_id, rev, title, blocks, (select max(saved_at) from note_versions v where v.note_id = notes.id) as last_v from notes where id = $1 for update', [p.id])).rows[0];
-    if (cur && cur.user_id !== uid) throw notFound('Appunto non trovato');
     // una versione di sicurezza ogni 10 minuti, o se il client salva sopra una revisione diversa (altro dispositivo)
     if (cur && (!cur.last_v || Date.now() - new Date(cur.last_v) > 10 * 60e3 || (b.baseRev && b.baseRev !== cur.rev))) {
-      await c.query('insert into note_versions (note_id, rev, title, blocks) values ($1,$2,$3,$4)', [p.id, cur.rev, cur.title, JSON.stringify(cur.blocks)]);
+      await c.query('insert into note_versions (note_id, rev, title, blocks, user_id) values ($1,$2,$3,$4,$5)', [p.id, cur.rev, cur.title, JSON.stringify(cur.blocks), uid]);
       await c.query(`delete from note_versions where note_id = $1 and id not in (select id from note_versions where note_id = $1 order by saved_at desc limit 50)`, [p.id]);
     }
     const r = await c.query(`insert into notes (id, user_id, notebook_id, title, blocks, plain, tags, pinned, paper, has_ink, created_at, updated_at, deleted_at, kind)
@@ -317,43 +382,56 @@ route('PUT', '/api/notes/:id', async (req, p) => {
         deleted_at = excluded.deleted_at, updated_at = now(), rev = notes.rev + 1
         where notes.user_id = excluded.user_id
       returning ${NOTE_META}`,
-      [p.id, uid, nbId, String(b.title || '').slice(0, 300), JSON.stringify(b.blocks || []), String(b.plain || '').slice(0, 200000),
+      [p.id, ownerId, nbId, String(b.title || '').slice(0, 300), JSON.stringify(b.blocks || []), String(b.plain || '').slice(0, 200000),
        Array.isArray(b.tags) ? b.tags.slice(0, 30).map(String) : [], !!b.pinned, b.paper || 'grid', !!b.has_ink, b.created_at || null, b.deleted_at || null, noteKind(b.kind)]);
     if (!r.rowCount) throw notFound('Appunto non trovato');
     await c.query('commit');
+    if (cur) live.notifyReaders(p.id, { t: 'changed', id: p.id, rev: r.rows[0].rev });
     return { ...r.rows[0], conflict: !!(cur && b.baseRev && b.baseRev !== cur.rev) };
   } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
 });
 route('PATCH', '/api/notes/:id', async (req, p) => {
   const b = await json(req);
   const cols = { notebook_id: 'uuid', pinned: 'bool', deleted_at: 'timestamptz', tags: 'text[]', title: 'text' };
+  // titolo ed etichette: basta «può modificare»; quaderno, cestino e «fissato» sono del proprietario
+  const ownOnly = ['notebook_id', 'pinned', 'deleted_at'].some((k) => k in b);
+  await can(req.user, ownOnly ? 'own' : 'edit', 'note', p.id);
+  if (!Object.keys(cols).some((k) => k in b)) throw bad('Niente da aggiornare');
+  if ('notebook_id' in b && b.notebook_id && (await notebookRole(req.user.id, b.notebook_id)) !== 'owner') throw bad('Quaderno non valido');
+  if (('title' in b || 'tags' in b) && await live.isY(p.id)) await live.patchMeta(p.id, b, req.user.id);
   const sets = [], vals = [];
   for (const k of Object.keys(cols)) if (k in b) { vals.push(b[k]); sets.push(`${k} = $${vals.length}::${cols[k]}`); }
-  if (!sets.length) throw bad('Niente da aggiornare');
-  if ('notebook_id' in b && b.notebook_id && !(await q('select 1 from notebooks where id = $1 and user_id = $2', [b.notebook_id, req.user.id])).rowCount) throw bad('Quaderno non valido');
-  vals.push(p.id, req.user.id);
-  const r = await q(`update notes set ${sets.join(', ')}, updated_at = now(), rev = rev + 1 where id = $${vals.length - 1} and user_id = $${vals.length} returning ${NOTE_META}`, vals);
+  vals.push(p.id);
+  const r = await q(`update notes set ${sets.join(', ')}, updated_at = now(), rev = rev + 1 where id = $${vals.length} returning ${NOTE_META}`, vals);
   if (!r.rowCount) throw notFound('Appunto non trovato');
+  live.notifyReaders(p.id, { t: 'changed', id: p.id, rev: r.rows[0].rev });
   return r.rows[0];
 });
 route('DELETE', '/api/notes/:id', async (req, p) => {
+  if (!(await can(req.user, 'own', 'note', p.id, { missing: true }))) return { ok: true };
+  const readers = await live.readersOf(p.id);
   await q('delete from notes where id = $1 and user_id = $2', [p.id, req.user.id]);
+  await q(`delete from shares where kind in ('note','repo') and target_id = $1`, [p.id]);
+  live.forget(p.id);
+  for (const u of readers) live.recheck(u);
   return { ok: true };
 });
 route('DELETE', '/api/trash', async (req) => {
-  const r = await q('delete from notes where deleted_at is not null and user_id = $1', [req.user.id]);
+  const r = await q('delete from notes where deleted_at is not null and user_id = $1 returning id', [req.user.id]);
+  for (const x of r.rows) live.forget(x.id);
   return { ok: true, deleted: r.rowCount };
 });
 
 route('GET', '/api/notes/:id/versions', async (req, p) => {
-  const r = await q(`select v.id, v.rev, v.title, v.saved_at, jsonb_array_length(v.blocks) as n_blocks
-     from note_versions v join notes n on n.id = v.note_id where v.note_id = $1 and n.user_id = $2 order by v.saved_at desc`, [p.id, req.user.id]);
+  await can(req.user, 'read', 'note', p.id);
+  const r = await q(`select v.id, v.rev, v.title, v.saved_at, jsonb_array_length(v.blocks) as n_blocks, coalesce(nullif(u.display_name, ''), u.username) as author
+     from note_versions v left join users u on u.id = v.user_id where v.note_id = $1 order by v.saved_at desc`, [p.id]);
   return r.rows;
 });
 route('GET', '/api/versions/:vid', async (req, p) => {
   if (!/^\d+$/.test(p.vid)) throw bad('Versione non valida');
-  const r = await q(`select v.id, v.note_id, v.rev, v.title, v.blocks, v.saved_at from note_versions v join notes n on n.id = v.note_id where v.id = $1 and n.user_id = $2`, [p.vid, req.user.id]);
-  if (!r.rowCount) throw notFound('Versione non trovata');
+  const r = await q(`select v.id, v.note_id, v.rev, v.title, v.blocks, v.saved_at from note_versions v where v.id = $1`, [p.vid]);
+  if (!r.rowCount || !(await can(req.user, 'read', 'note', r.rows[0].note_id, { missing: true }))) throw notFound('Versione non trovata');
   return r.rows[0];
 });
 
@@ -363,7 +441,7 @@ route('GET', '/api/search', async (req) => {
   const r = await q(`select id, notebook_id, kind, title, updated_at,
       ts_headline('italian', plain, websearch_to_tsquery('italian', $1), 'StartSel=«, StopSel=», MaxWords=18, MinWords=6') as snippet,
       ts_rank(search, websearch_to_tsquery('italian', $1)) as rank
-    from notes where user_id = $2 and deleted_at is null and (search @@ websearch_to_tsquery('italian', $1) or title ilike '%' || $1 || '%')
+    from notes where id in (select id from readable_notes($2)) and deleted_at is null and (search @@ websearch_to_tsquery('italian', $1) or title ilike '%' || $1 || '%')
     order by rank desc, updated_at desc limit 40`, [term, req.user.id]);
   return r.rows;
 });
@@ -374,20 +452,146 @@ route('POST', '/api/attachments', async (req) => {
   const mime = req.headers['content-type'] || 'application/octet-stream';
   const isPdf = mime === 'application/pdf';
   if (!isPdf && !/^image\/(jpeg|png|webp|gif|heic|heif)$/.test(mime)) throw bad('Sono accettati solo immagini e PDF');
+  const noteId = UUID.test(req.headers['x-note-id'] || '') ? req.headers['x-note-id'] : null;
+  // in un appunto di qualcun altro si aggiungono foto solo con «può modificare» (l'appunto può anche non esistere ancora)
+  if (noteId) await can(req.user, 'edit', 'note', noteId, { missing: true });
   // 2026.11.6: i PDF (dispense, slide) possono essere grandi; le foto sono già rimpicciolite dall'app
   const buf = await readBody(req, (isPdf ? 100 : 15) * 1024 * 1024);
   if (isPdf && buf.subarray(0, 1024).indexOf('%PDF-') < 0) throw bad('Il file non sembra un PDF: aprilo in un\'altra app e salvalo di nuovo come PDF');
-  await q('insert into attachments (id, user_id, note_id, mime, bytes) values ($1,$2,$3,$4,$5) on conflict (id) do nothing',
-    [id, req.user.id, UUID.test(req.headers['x-note-id'] || '') ? req.headers['x-note-id'] : null, mime, buf]);
+  await q('insert into attachments (id, user_id, note_id, mime, bytes) values ($1,$2,$3,$4,$5) on conflict (id) do nothing', [id, req.user.id, noteId, mime, buf]);
   return { id, url: `/api/attachments/${id}` };
 });
 route('GET', '/api/attachments/:id', async (req, p, res) => {
-  const r = await q('select mime, bytes from attachments where id = $1 and user_id = $2', [p.id, req.user.id]);
-  if (!r.rowCount) throw notFound('Allegato non trovato');
-  res.writeHead(200, { 'Content-Type': r.rows[0].mime, 'Content-Length': r.rows[0].bytes.length, 'Cache-Control': 'private, max-age=31536000, immutable' });
-  res.end(r.rows[0].bytes);
+  const r = await q('select mime, bytes, user_id, note_id from attachments where id = $1', [p.id]);
+  const a = r.rows[0];
+  // tue, o di un appunto che puoi leggere
+  if (!a || (a.user_id !== req.user.id && !(a.note_id && await noteRole(req.user.id, a.note_id)))) throw notFound('Allegato non trovato');
+  res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.bytes.length, 'Cache-Control': 'private, max-age=31536000, immutable' });
+  res.end(a.bytes);
   return undefined;
 });
+
+// --- condivisione con altri account dello stesso server (punto 9) -----------------------------------------------
+const SHARE_KINDS = new Set(['notebook', 'note', 'repo']);
+const resKind = (k) => (k === 'notebook' ? 'notebook' : 'note');
+async function shareTarget(user, kind, id) {
+  if (!SHARE_KINDS.has(kind)) throw bad('Cosa vuoi condividere? (quaderno, appunto o repository)');
+  await can(user, 'own', resKind(kind), id);
+  if (kind !== 'notebook') {
+    const k = (await q('select kind from notes where id = $1', [id])).rows[0]?.kind;
+    if ((kind === 'repo') !== (k === 'repo')) throw bad(kind === 'repo' ? 'Non è un repository' : 'È un repository: condividilo come repository');
+  }
+}
+route('GET', '/api/users/find', async (req) => {
+  const term = String(new URL(req.url, 'http://x').searchParams.get('q') || '').trim().toLowerCase();
+  if (term.length < 2) return [];
+  const r = await q(`select username, coalesce(nullif(display_name, ''), username) as display_name from users
+    where id <> $2 and pass_hash is not null and (username like $1 || '%' or lower(display_name) like $1 || '%') order by username limit 8`, [term.replace(/[%_\\]/g, ''), req.user.id]);
+  return r.rows;
+});
+route('GET', '/api/shares', async (req) => {
+  const u = new URL(req.url, 'http://x').searchParams;
+  const kind = u.get('kind'), id = u.get('id');
+  if (!kind) {
+    // le mie condivisioni, fatte e ricevute
+    const r = await q(`select s.id, s.kind, s.target_id, s.role, s.created_at, s.owner_id = $1 as mine,
+        coalesce(nullif(g.display_name, ''), g.username) as grantee_name, g.username as grantee,
+        coalesce(nullif(o.display_name, ''), o.username) as owner_name
+      from shares s join users g on g.id = s.grantee_id join users o on o.id = s.owner_id where s.owner_id = $1 or s.grantee_id = $1 order by s.created_at desc`, [req.user.id]);
+    return r.rows;
+  }
+  await shareTarget(req.user, kind, id);
+  const [sh, ln] = await Promise.all([
+    q(`select s.id, s.role, s.created_at, g.username, coalesce(nullif(g.display_name, ''), g.username) as display_name
+         from shares s join users g on g.id = s.grantee_id where s.kind = $1 and s.target_id = $2 and s.owner_id = $3 order by s.created_at`, [kind, id, req.user.id]),
+    q(`select id, created_at, expires_at, revoked_at from links where target_id = $1 and created_by = $2 and revoked_at is null and expires_at > now() order by created_at desc`, [id, req.user.id]),
+  ]);
+  return { shares: sh.rows, links: ln.rows };
+});
+route('POST', '/api/shares', async (req) => {
+  const { kind, target_id, username, role } = await json(req);
+  if (!['read', 'edit'].includes(role)) throw bad('Scegli «può leggere» o «può modificare»');
+  await shareTarget(req.user, kind, target_id);
+  const g = (await q('select id from users where username = $1 and pass_hash is not null', [String(username || '').trim().toLowerCase()])).rows[0];
+  if (!g) throw notFound('Nessun account con questo nome su questo server');
+  if (g.id === req.user.id) throw bad('È il tuo account: non serve condividere con te stesso');
+  const r = await q(`insert into shares (owner_id, kind, target_id, grantee_id, role) values ($1,$2,$3,$4,$5)
+    on conflict (kind, target_id, grantee_id) do update set role = excluded.role returning id, role`, [req.user.id, kind, target_id, g.id, role]);
+  await live.recheck(g.id);
+  live.notify(new Set([g.id]), { t: 'shared' });
+  return r.rows[0];
+});
+route('PATCH', '/api/shares/:id', async (req, p) => {
+  const { role } = await json(req);
+  if (!['read', 'edit'].includes(role)) throw bad('Scegli «può leggere» o «può modificare»');
+  const r = await q('update shares set role = $3 where id = $1 and owner_id = $2 returning grantee_id', [p.id, req.user.id, role]);
+  if (!r.rowCount) throw notFound('Condivisione non trovata');
+  await live.recheck(r.rows[0].grantee_id);
+  live.notify(new Set([r.rows[0].grantee_id]), { t: 'shared' });
+  return { ok: true };
+});
+route('DELETE', '/api/shares/:id', async (req, p) => {
+  if (!UUID.test(p.id)) throw bad('Id non valido');
+  // la revoca la fa il proprietario; chi l'ha ricevuta può toglierla dai suoi «Condivisi con me»
+  const r = await q('delete from shares where id = $1 and (owner_id = $2 or grantee_id = $2) returning grantee_id', [p.id, req.user.id]);
+  if (!r.rowCount) throw notFound('Condivisione non trovata');
+  await live.recheck(r.rows[0].grantee_id); // revoca immediata, anche sul WebSocket aperto
+  live.notify(new Set([r.rows[0].grantee_id]), { t: 'shared' });
+  return { ok: true };
+});
+
+// --- link in sola lettura, con scadenza obbligatoria (per ora funzionano solo nella tailnet) --------------------
+route('POST', '/api/links', async (req) => {
+  const { kind, target_id, days } = await json(req);
+  if (!['note', 'notebook'].includes(kind)) throw bad('Si condivide con un link un appunto o un quaderno');
+  await can(req.user, 'own', kind, target_id);
+  const d = Math.round(Number(days));
+  if (!(d >= 1 && d <= 90)) throw bad('La scadenza va da 1 a 90 giorni');
+  const tok = newToken();
+  const r = await q(`insert into links (token_hash, kind, target_id, created_by, expires_at) values ($1,$2,$3,$4, now() + make_interval(days => $5)) returning id, expires_at`, [tokenHash(tok), kind, target_id, req.user.id, d]);
+  return { ...r.rows[0], path: `/l/${tok}` };
+});
+route('DELETE', '/api/links/:id', async (req, p) => {
+  if (!UUID.test(p.id)) throw bad('Id non valido');
+  const r = await q('update links set revoked_at = now() where id = $1 and created_by = $2 and revoked_at is null', [p.id, req.user.id]);
+  if (!r.rowCount) throw notFound('Link non trovato');
+  return { ok: true };
+});
+// cosa mostra un link: solo l'appunto (o gli appunti del quaderno), niente altro dell'account
+async function linkScope(token) {
+  if (!/^[\w-]{20,100}$/.test(token || '')) return null;
+  const l = (await q(`select l.kind, l.target_id, l.created_by, l.expires_at from links l where l.token_hash = $1 and l.revoked_at is null and l.expires_at > now()`, [tokenHash(token)])).rows[0];
+  if (!l) return null;
+  // il link vale finché chi l'ha creato è ancora il proprietario
+  const role = l.kind === 'notebook' ? await notebookRole(l.created_by, l.target_id) : await noteRole(l.created_by, l.target_id);
+  return role === 'owner' ? l : null;
+}
+route('GET', '/api/public/:token', async (req, p) => {
+  const l = await linkScope(p.token);
+  if (!l) throw notFound('Link scaduto o revocato: chiedi un link nuovo a chi te l\'ha mandato');
+  const cols = 'id, title, blocks, paper, created_at, updated_at';
+  const owner_name = (await q(`select coalesce(nullif(display_name, ''), username) as n from users where id = $1`, [l.created_by])).rows[0]?.n || '';
+  if (l.kind === 'note') {
+    const n = (await q(`select ${cols}, notebook_id from notes where id = $1 and deleted_at is null`, [l.target_id])).rows[0];
+    if (!n) throw notFound('L\'appunto non c\'è più');
+    const nb = n.notebook_id ? (await q('select title, code, color from notebooks where id = $1', [n.notebook_id])).rows[0] : null;
+    delete n.notebook_id;
+    return { kind: 'note', expires_at: l.expires_at, owner_name, notebook: nb || null, notes: [n] };
+  }
+  const nb = (await q('select title, code, color from notebooks where id = $1', [l.target_id])).rows[0];
+  const ns = await q(`select ${cols} from notes where notebook_id = $1 and deleted_at is null and kind = 'note' order by created_at`, [l.target_id]);
+  return { kind: 'notebook', expires_at: l.expires_at, owner_name, notebook: nb, notes: ns.rows };
+}, { public: true });
+route('GET', '/api/public/:token/att/:id', async (req, p, res) => {
+  const l = await linkScope(p.token);
+  if (!l || !UUID.test(p.id)) throw notFound('Allegato non trovato');
+  const a = (await q(`select a.mime, a.bytes from attachments a join notes n on n.id = a.note_id
+    where a.id = $1 and n.deleted_at is null and (($2 = 'note' and n.id = $3) or ($2 = 'notebook' and n.notebook_id = $3))`, [p.id, l.kind, l.target_id])).rows[0];
+  if (!a) throw notFound('Allegato non trovato');
+  res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.bytes.length, 'Cache-Control': 'private, max-age=3600' });
+  res.end(a.bytes);
+  return undefined;
+}, { public: true });
 
 // --- impostazioni dell'utente (orario delle lezioni, …) ------------------------------------
 route('PUT', '/api/settings', async (req) => {
@@ -510,6 +714,11 @@ async function handler(req, res) {
     return send(res, 404, { error: 'Percorso API sconosciuto' });
   }
 
+  // link in sola lettura: una pagina statica che legge /api/public/<token> (niente accesso al resto dell'account)
+  if (/^\/l\/[\w-]{20,100}$/.test(p)) return serveFile(req, res, path.join(PUBLIC, 'shared.html'), false);
+  // federazione (punto 10, prototipo): chiave pubblica di questo server
+  if (p === '/.well-known/quadretto') return send(res, 200, fed.wellKnown(req));
+
   if (p.startsWith('/vendor/')) {
     const rest = p.slice('/vendor/'.length);
     const key = Object.keys(VENDOR).find((k) => rest.startsWith(k));
@@ -537,5 +746,21 @@ await q(`delete from sessions where last_seen < now() - interval '${SESSION_DAYS
 const server = tls
   ? https.createServer({ cert: fs.readFileSync(CERT), key: fs.readFileSync(KEY) }, handler)
   : http.createServer(handler);
+// 2026-11-24: live (WebSocket su /api/live, stessa porta). L'origine deve essere l'app stessa (difesa CSRF).
+function originOk(req) {
+  let o;
+  try { o = new URL(req.headers.origin || ''); } catch { return false; }
+  const hosts = new Set([req.headers.host, req.headers['x-forwarded-host']].filter(Boolean));
+  if (HTTPS_URL) try { hosts.add(new URL(HTTPS_URL).host); } catch {}
+  return hosts.has(o.host);
+}
+live = startLive({ server, q, userFromRequest: async (req) => { const u = await userFromRequest(req); return u && { ...u, display_name: u.display_name || u.username, session: tokenHash(readCookie(req)) }; }, noteRole, originOk });
+await fed.init({ q, APP, VERSION, route, json, bad, notFound, can, noteRole, publicUser });
 server.listen(PORT, HOST, () => console.log(`Quadretto ${VERSION} su ${tls ? 'https' : 'http'}://${HOST}:${PORT}`));
-for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => server.close(() => pool.end().then(() => process.exit(0))));
+let closing = false;
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, async () => {
+  if (closing) return; closing = true;
+  try { await live.close(); } catch (e) { console.error('live', e.message); } // documenti Yjs salvati prima di uscire
+  server.close(() => pool.end().then(() => process.exit(0)));
+  setTimeout(() => process.exit(0), 5000).unref();
+});

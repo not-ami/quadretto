@@ -5,6 +5,16 @@
 // (app.js li traduce quando li mostra). Controllo: node scripts/i18n-mancanti.mjs --novita
 export const CHANGELOG = [
   {
+    v: '2026.11.8', date: '2026-11-25',
+    items: [
+      ['Quadretto in italiano e in inglese', 'L\'interfaccia parla italiano o inglese: la lingua si sceglie in Impostazioni e resta nel tuo account, su tutti i dispositivi.', 'Puoi usare Quadretto in italiano o in inglese.'],
+      ['Appunti in diretta su tutti i dispositivi', 'Apri lo stesso appunto sull\'iPad e sul Mac: testo, scrittura a mano, codice e strumenti arrivano sull\'altro mentre scrivi. Senza rete le modifiche restano sul dispositivo e si uniscono da sole quando torna, senza conflitti.', 'Un appunto ora si aggiorna in diretta su tutti i tuoi dispositivi.'],
+      ['Chi c\'è nell\'appunto', 'In alto vedi chi ha aperto l\'appunto; nel testo e nel codice vedi dove sta scrivendo, sulla tavola compare «sta scrivendo» accanto alla sua penna. Annulla toglie solo quello che hai scritto tu.', 'Vedi chi sta scrivendo e dove.'],
+      ['Condividi quaderni, appunti e repository', 'Con «Condividi…» nel menu di un appunto o di un repository, o nelle impostazioni di un quaderno, li dai a un\'altra persona di questo server, che può leggere o anche modificare. Quello che ti condividono è in Home, in «Condivisi con me». La condivisione si toglie quando vuoi.', 'Ora puoi condividere quaderni e appunti con altre persone.'],
+      ['Link da leggere', 'Un link apre l\'appunto o il quaderno come pagina da leggere o stampare, senza account, e scade dopo il numero di giorni che scegli. Funziona dentro la tua rete privata.'],
+    ],
+  },
+  {
     v: '2026.11.7', date: '2026-11-24',
     items: [
       ['Formattazione con un tocco', 'Mentre scrivi un testo, la barra sopra la tastiera mette titoli, grassetto, corsivo, elenchi, cose da fare, citazioni, riquadri Definizione e Teorema, collegamenti, codice, formule e tabelle. Toccando di nuovo un pulsante acceso togli la formattazione; sotto vedi come verrà. Con la tastiera: ⌘B, ⌘I, ⌘K, ⌘1-3 e le altre scorciatoie (premi ?).', 'Formatta il testo con la barra sopra la tastiera, senza ricordare simboli'],

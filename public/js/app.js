@@ -1,4 +1,4 @@
-import { store, uuid, setLocalUser } from './store.js';
+import { store, uuid, setLocalUser, api } from './store.js';
 import { ensureUser, logout, showLogin, changePasswordForm } from './auth.js';
 import { InkBoard, inkPrefs, inkView, inkTouch, hlColor, savePrefs, prefsHooks, thumb, inkPreview } from './ink.js';
 import { initMotion, drag, spring, rubber, viewTransition, measure, flip, reduced } from './motion.js';
@@ -12,6 +12,8 @@ import { TOOLS, toolsFor, renderTool, newTool, TEMPLATES as REPO_TEMPLATES } fro
 import { VERSION, SOURCE_URL } from './version.js';
 // In questo file t è spesso una variabile locale: la traduzione si chiama T() (vedi i18n.js).
 import { t as T, tp, tn, getLang, setLang, LANGS as UI_LANGS, fmtDate, locale } from './i18n.js';
+import { live } from './live.js';
+import { initCollab, collab, isReadOnly, decorateBar, renderReadOnly, shareSheet, sharedNotebookSheet, homeSection } from './collab.js';
 import { CHANGELOG } from './changelog.js';
 import { readPdf, pageBlocks, renderPage, setQuiet as pdfQuiet } from './pdfdoc.js';
 
@@ -49,6 +51,7 @@ const I = {
   down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   move: '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M10 13h6M13 10l3 3-3 3"/>',
+  share: '<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4.1M8.2 13.2l7.6 4.1"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   grid: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/>',
   expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
@@ -183,7 +186,7 @@ function nbRow(nb, n) {
   const d = daysTo(nb.exam_date);
   return h('button', { class: 'nb-row' + (ui.view.kind === 'notebook' && ui.view.id === nb.id && !ui.query ? ' active' : ''), onclick: () => go({ kind: 'notebook', id: nb.id }) },
     h('span', { class: 'nb-code', '--c': nb.color }, nb.code || codeFrom(nb.title)),
-    h('span', { class: 'nb-name' }, nb.title),
+    h('span', { class: 'nb-name' }, nb.title, nb.shared ? h('small', { class: 'nb-owner' }, ' · ' + nb.shared.owner_name) : null),
     d != null && d >= 0 && d <= 60 ? h('span', { class: 'nb-exam' + (d <= 7 ? ' soon' : ''), title: T('Giorni all\'esame') }, d === 0 ? 'oggi' : `${d} g`) : h('span', { class: 'count' }, n || ''));
 }
 
@@ -254,6 +257,8 @@ function renderHome() {
         h('span', { class: 'exam-date' }, new Date(nb.exam_date + 'T00:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'short' })))))));
   }
 
+  const shared = homeSection(); // 2026-11-24: «Condivisi con me»
+  if (shared) sections.push(shared);
   const study = studySection();
   if (study) sections.push(study);
 
@@ -734,6 +739,8 @@ const isEmptyNote = (n) => !n.title.trim() && !n.blocks.some((b) => (b.type === 
 function scheduleSave(now = false) {
   if (!ui.note) return;
   const note = ui.note;
+  if (isReadOnly(note)) return;
+  collab.changed(note.id); // live: la modifica parte subito come aggiornamento CRDT (a penna ferma)
   clearTimeout(saveTimer);
   const run = () => {
     if (!penQuiet()) { saveTimer = setTimeout(run, 400); return; }
@@ -749,25 +756,34 @@ function scheduleSave(now = false) {
 function flushSave() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; pen.down = false; pen.last = 0; scheduleSave(true); } }
 
 async function openNote(id, { focusTitle = false } = {}) {
+  const reload = ui.noteId === id && !!ui.note; // stesso appunto riletto perché cambiato altrove
+  if (!reload) pano?.close();
   rememberScroll();
   flushSave();
+  if (ui.noteId && ui.noteId !== id) collab.close(ui.noteId);
   let note;
   try { note = await store.getNote(id); } catch (e) { toast(T('Non riesco ad aprire l\'appunto: ') + e.message); return; }
-  viewTransition(() => {
+  if (reload && (ui.noteId !== id || saveTimer || !penQuiet())) return; // nel frattempo hai scritto: al prossimo giro
+  const apply = () => {
     ui.noteId = id; ui.note = structuredClone(note); ui.active = null; ui.editing = null;
     ls.set('lastNote', id);
     legendSel.clear(); inkView.only = null;
     app.dataset.view = 'editor';
     renderEditor({ focusTitle });
     renderList();
-  }, narrow() ? 'forward' : 'fade');
+    collab.open(ui.note);
+  };
+  if (reload) { const top = $('#ed-scroll')?.scrollTop; apply(); const sc = $('#ed-scroll'); if (sc && top != null) sc.scrollTop = top; return; }
+  viewTransition(apply, narrow() ? 'forward' : 'fade');
   restoreScroll(id);
 }
 
 function newNote(opts = {}) {
   if (opts instanceof Event) opts = {};
+  pano?.close();
   rememberScroll();
   flushSave();
+  if (ui.noteId) collab.close(ui.noteId);
   const nbId = opts.notebookId !== undefined ? opts.notebookId : ui.view.kind === 'notebook' ? ui.view.id : null;
   const note = store.newNote(nbId);
   if (opts.title) note.title = opts.title;
@@ -783,14 +799,17 @@ function newNote(opts = {}) {
   if (ui.view.kind === 'trash' || ui.view.kind === 'pinned' || ui.view.kind === 'home') go({ kind: 'recent' });
   renderEditor({ focusTitle: !startInk && !opts.title && !opts.template && !opts.tool && opts.text == null });
   renderList();
+  collab.open(note);
   if (opts.tool) scheduleSave();
   if (opts.template) applyTemplate(TEMPLATES.find((t) => t.k === opts.template));
 }
 
 function closeNote() {
+  pano?.close();
   rememberScroll();
   legendSel.clear(); inkView.only = null;
   flushSave();
+  collab.close(ui.noteId);
   if (ui.note && ui.note.rev === 0 && !ui.note._saved) { /* appunto vuoto mai salvato: scartato */ }
   for (const b of boards.values()) b.destroy();
   boards.clear();
@@ -807,9 +826,14 @@ function renderEditor({ focusTitle = false } = {}) {
   const blockIde = ideBlock && ui.note && ideBlock.note === ui.note.id && ui.note.blocks.some((b) => b.id === ideBlock.id && b.type === 'code');
   if (!blockIde) ideBlock = null;
   if ((!ui.note || !isRepo(ui.note)) && !blockIde) { delete app.dataset.ide; repoCode = null; ideFrom = null; }
-  for (const b of boards.values()) b.destroy();
-  boards.clear();
   const note = ui.note;
+  // la tavola aperta nella vista panoramica sopravvive al ridisegno (BUG-017): distruggerla lasciava la panoramica a
+  // schermo con una tavola scollegata, e quello che si scriveva andava perso
+  if (pano && !(note && note.id === pano.noteId && !isReadOnly(note) && !isRepo(note) && !blockIde && note.blocks.some((b) => b.id === pano.id && b.type === 'ink'))) pano.close({ discard: true });
+  const kept = pano && boards.get(pano.id);
+  for (const b of boards.values()) if (b !== kept) b.destroy();
+  boards.clear();
+  if (kept) boards.set(pano.id, kept);
   if (!note) {
     ed.replaceChildren(h('div', { class: 'ed-empty' }, h('div', {},
       h('div', { class: 'big-grid' }),
@@ -831,9 +855,11 @@ function renderEditor({ focusTitle = false } = {}) {
     h('button', { class: 'focus-btn' + (focusT ? ' on' : ''), id: 'focus-btn', 'aria-label': T('Timer di concentrazione'), title: T('Timer di concentrazione'), onclick: (e) => focusPop(e.currentTarget) }, svg(I.clock), h('span', { id: 'focus-left' }, focusLeft())),
     trashed ? h('button', { class: 'btn', onclick: restoreNote }, T('Ripristina')) : null,
     isRepo(note) ? null : h('button', { class: 'icon-btn', 'aria-label': T('Modalità IDE'), title: T('Modalità IDE (⌘⇧E)'), onclick: ideFromNote }, svg(I.code)),
-    h('button', { class: 'icon-btn' + (note.pinned ? ' on' : ''), 'aria-label': note.pinned ? T('Togli da fissati') : T('Fissa in alto'), onclick: togglePin }, svg(I.pin)),
+    note.shared ? null : h('button', { class: 'icon-btn' + (note.pinned ? ' on' : ''), 'aria-label': note.pinned ? T('Togli da fissati') : T('Fissa in alto'), onclick: togglePin }, svg(I.pin)),
     h('button', { class: 'icon-btn', 'aria-label': T('Altre azioni'), onclick: noteMenu }, svg(I.more)));
 
+  decorateBar(bar, note); // live: chi c'è; condiviso: di chi è
+  if (isReadOnly(note)) { renderReadOnly(ed, bar, note); return; }
   if (isRepo(note)) { renderRepoEditor(ed, bar, note); return; }
   if (blockIde) { renderBlockIde(ed, bar, note); return; }
   const title = h('textarea', { class: 'title-input', id: 'note-title', rows: 1, placeholder: T('Titolo'), enterkeyhint: 'next', 'aria-label': T('Titolo') });
@@ -904,6 +930,7 @@ function renderEditor({ focusTitle = false } = {}) {
 
   ed.replaceChildren(bar, scroll, buildDock());
   renderBlocks();
+  pano?.adopt();
   requestAnimationFrame(() => { autosize(title); if (focusTitle) title.focus(); });
 }
 
@@ -983,6 +1010,7 @@ function renderBlock(b, i, keep) {
           } }, n.title)));
       };
       drawPrev();
+      ta._refresh = () => { size(); bar.refresh(); drawPrev(); }; // live: testo cambiato altrove
       wrap.append(ta, bar, prev, blockTools(b, i));
     } else {
       const md = h('div', { class: 'md' + (b.text.trim() ? '' : ' placeholder') });
@@ -1010,7 +1038,7 @@ function renderBlock(b, i, keep) {
     if (board) { keep.delete(b.id); board.block = b; }
     else board = new InkBoard(b, { paper: ui.note.paper, pageUrl: (att) => store.imageUrl(att), onChange: () => { scheduleSave(); updateDock(); }, onActivate: () => { lastBoardId = b.id; activate(b.id); }, onSnap: (name) => snapBadge(name),
       onStrokeStart: () => { pen.down = true; lastBoardId = b.id; },
-      onStrokeEnd: () => { pen.down = false; pen.last = Date.now(); },
+      onStrokeEnd: () => { pen.down = false; pen.last = Date.now(); collab.inkStroke(b.id); },
       onGesture: (g) => { snapBadge(g); updateDock(); } });
     board.setPaper(ui.note.paper);
     boards.set(b.id, board);
@@ -1059,29 +1087,53 @@ async function blockToRepo(b, i) {
 // La tavola va a tutto schermo con più spazio (a destra e sotto), l'inchiostro alla stessa grandezza della pagina.
 // «Riduci» la rimette al suo posto: se si è scritto oltre la larghezza della pagina, tutto rimpicciolisce insieme
 // per entrare nel riquadro, che si allunga verso il basso se serve. Gli altri blocchi e l'ordine non cambiano.
+let pano = null; // la panoramica aperta: { id, noteId, close, adopt }
 function openPano(b) {
   const board = boards.get(b.id);
-  if (!board || document.querySelector('.pano')) return;
+  if (!board || pano) return;
+  const id = b.id;
   const holder = board.frame.parentElement, next = board.frame.nextSibling;
-  const dock = $('#dock');
   const pageW = board.pan.clientWidth || board.frame.clientWidth;
   const h0 = b.h;
   const scroll = h('div', { class: 'pano-scroll' });
   const zoomLbl = h('span', { class: 'pano-zoom' }, '100%');
-  const close = () => {
+  // sempre il blocco di adesso: dopo una modifica arrivata da fuori `b` può essere un oggetto vecchio
+  const close = ({ discard = false } = {}) => {
+    pano = null;
     document.removeEventListener('keydown', onKey);
+    ro.disconnect();
     board.wide = 1; board.onZoom = null; board.infinite = false; board.extentW = 0;
-    holder.insertBefore(board.frame, next);
-    if (dock) $('#editor').append(dock);
-    b.h = Math.max(h0, 200);
-    const r = board.fitToPage();
-    board.setZoom(1);
+    const ph = document.querySelector(`#blocks > .block[data-id="${id}"] > .ink-pano-ph`);
+    if (ph) ph.replaceWith(board.frame);
+    else if (holder.isConnected) holder.insertBefore(board.frame, next);
+    else board.frame.remove();
+    const dock = ov.querySelector('#dock');
+    if (dock) { if ($('#editor #dock')) dock.remove(); else $('#editor').append(dock); }
     ov.remove();
     app.classList.remove('pano-open');
+    if (discard) { board.destroy(); return; }
+    const cur = board.block;
+    cur.h = Math.max(h0, 200);
+    const r = board.fitToPage();
+    board.setZoom(1);
     scheduleSave(true);
-    if (r.changed) toast(r.k < 1 ? (b.h > h0 ? T('Tavola rimpicciolita al {p}% per entrare nel riquadro, che si è allungato verso il basso', { p: Math.round(r.k * 100) }) : T('Tavola rimpicciolita al {p}% per entrare nel riquadro', { p: Math.round(r.k * 100) })) : T('Il riquadro si è allungato verso il basso per contenere tutto'), { label: tp('azione', 'Annulla'), fn: () => { board.undo(); scheduleSave(true); } });
+    if (r.changed) toast(r.k < 1 ? (cur.h > h0 ? T('Tavola rimpicciolita al {p}% per entrare nel riquadro, che si è allungato verso il basso', { p: Math.round(r.k * 100) }) : T('Tavola rimpicciolita al {p}% per entrare nel riquadro', { p: Math.round(r.k * 100) })) : T('Il riquadro si è allungato verso il basso per contenere tutto'), { label: tp('azione', 'Annulla'), fn: () => { board.undo(); scheduleSave(true); } });
     requestAnimationFrame(() => board.frame.scrollIntoView({ block: 'nearest' }));
   };
+  // dopo un ridisegno dell'editor: la barra nuova torna nella panoramica e la tavola resta quella attiva
+  const adopt = () => {
+    const fresh = $('#editor #dock');
+    if (fresh) { ov.querySelector('#dock')?.remove(); ov.append(fresh); }
+    ui.active = null; activate(id);
+  };
+  // ruotando l'iPad cambia la larghezza: l'inchiostro resta grande quanto sulla pagina, cambia solo lo spazio a destra
+  const ro = new ResizeObserver(() => {
+    const wide = Math.max(1, (scroll.clientWidth - 40) / pageW);
+    if (!scroll.clientWidth || Math.abs(wide - board.wide) < 0.001) return;
+    board.wide = wide;
+    if (board.extentW) board.extentW = Math.max(board.extentW, Math.round(1000 * wide));
+    board.resize();
+  });
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   const ov = h('div', { class: 'pano', role: 'dialog', 'aria-label': T('Vista panoramica') },
     h('div', { class: 'pano-bar' },
@@ -1090,18 +1142,21 @@ function openPano(b) {
       h('span', { class: 'spacer' }),
       h('button', { class: 'icon-btn', 'aria-label': T('Rimpicciolisci'), onclick: () => board.setZoom(board.zoom / 1.25) }, '−'), zoomLbl,
       h('button', { class: 'icon-btn', 'aria-label': T('Ingrandisci'), onclick: () => board.setZoom(board.zoom * 1.25) }, '+'),
-      h('button', { class: 'btn primary', onclick: close }, T('Riduci'))),
+      h('button', { class: 'btn primary', onclick: () => close() }, T('Riduci'))),
     scroll);
+  const dock = $('#dock');
   document.body.append(ov);
   app.classList.add('pano-open');
   scroll.append(board.frame);
   if (dock) ov.append(dock);
+  pano = { id, noteId: ui.note.id, close, adopt };
   board.wide = Math.max(1, (scroll.clientWidth - 40) / pageW);
   board.infinite = true; // 2026.11.6: pagine infinite, la tavola si allunga a destra e in basso mentre scorri
   b.h = Math.max(h0, Math.ceil((scroll.clientHeight - 20) / (pageW / 1000)) + 200);
   board.onZoom = (z) => { zoomLbl.textContent = Math.round(z * 100) + '%'; };
   board.setZoom(1);
-  lastBoardId = b.id; activate(b.id);
+  ro.observe(scroll);
+  lastBoardId = id; activate(id);
   document.addEventListener('keydown', onKey);
 }
 
@@ -1419,21 +1474,27 @@ function insertBlocks(blocks) {
 }
 
 // --- azioni appunto ----------------------------------------------------------
+// 2026-11-24: quaderno, cestino e «fissato» non sono nel documento Yjs: per un appunto live vanno col PATCH
+function noteFields(fields) {
+  Object.assign(ui.note, fields);
+  if (collab.owns(ui.note.id) && ui.note.rev > 0) store.patchNote(ui.note.id, fields);
+  scheduleSave(true);
+}
 function togglePin() {
-  ui.note.pinned = !ui.note.pinned;
-  scheduleSave(true); renderEditor();
+  noteFields({ pinned: !ui.note.pinned });
+  renderEditor();
   toast(ui.note.pinned ? T('Fissato in alto') : T('Tolto dai fissati'));
 }
 function trashNote() {
   const id = ui.note.id;
   const wasNew = ui.note.rev === 0 && !ui.note._saved;
-  if (!wasNew) { ui.note.deleted_at = new Date().toISOString(); scheduleSave(true); }
+  if (!wasNew) noteFields({ deleted_at: new Date().toISOString() });
   closeSheet(); closeNote();
   if (!wasNew) toast(T('Spostato nel cestino'), { label: tp('azione', 'Annulla'), fn: async () => { await store.patchNote(id, { deleted_at: null }); openNote(id); } });
 }
 function restoreNote() {
-  ui.note.deleted_at = null;
-  scheduleSave(true); renderEditor(); toast(T('Appunto ripristinato'));
+  noteFields({ deleted_at: null });
+  renderEditor(); toast(T('Appunto ripristinato'));
 }
 
 let sheetT;
@@ -1485,10 +1546,11 @@ function noteMenu() {
       // 2026.11.6: le pagine di un PDF in un appunto già esistente, dopo il blocco attivo (o in fondo)
       isRepo(note) ? null : h('button', { onclick: () => { closeSheet(); pickPdf('insert'); } }, svg(I.pdf), (ui.active || ui.editing) ? T('Aggiungi un PDF dopo il blocco selezionato') : T('Aggiungi un PDF in fondo all\'appunto')),
       isRepo(note) ? null : h('button', { onclick: () => { closeSheet(); exportPdf([note.id]); } }, svg(I.pdf), T('Esporta in PDF (copertina, indice, stile)')),
-      h('button', { onclick: () => moveSheet() }, svg(I.move), T('Sposta in un altro quaderno')),
+      note.shared || !note.rev ? null : h('button', { onclick: () => shareSheet(isRepo(note) ? 'repo' : 'note', note) }, svg(I.share), T('Condividi…')),
+      note.shared ? null : h('button', { onclick: () => moveSheet() }, svg(I.move), T('Sposta in un altro quaderno')),
       h('button', { onclick: () => versionsSheet() }, svg(I.clock), T('Cronologia versioni')),
       isRepo(note) ? null : h('button', { onclick: () => { prefs.wide = !prefs.wide; ls.set('prefs', prefs); closeSheet(); renderEditor(); } }, svg(I.expand), prefs.wide ? T('Pagina a larghezza normale') : T('Pagina a tutta larghezza')),
-      note.deleted_at
+      note.shared ? null : note.deleted_at
         ? confirmBtn(T('Elimina per sempre'), async () => { await store.destroyNote(note.id); ui.note.rev = 0; ui.note._saved = false; closeSheet(); closeNote(); toast(T('Eliminato definitivamente')); }, 'danger')
         : h('button', { class: 'danger', onclick: trashNote }, svg(I.trash), T('Sposta nel cestino'))),
   ]);
@@ -1501,9 +1563,9 @@ function moveSheet() {
     h('h2', {}, T('Sposta in…')),
     h('p', { class: 'lead' }, T('Scegli il quaderno di questo appunto.')),
     h('div', { class: 'menu-list' },
-      list.map((nb) => h('button', { onclick: () => { note.notebook_id = nb.id; scheduleSave(true); closeSheet(); renderEditor(); toast(T('Spostato in {quaderno}', { quaderno: nb.title })); } },
+      list.filter((nb) => !nb.shared).map((nb) => h('button', { onclick: () => { noteFields({ notebook_id: nb.id }); closeSheet(); renderEditor(); toast(T('Spostato in {quaderno}', { quaderno: nb.title })); } },
         h('span', { class: 'nb-code', '--c': nb.color }, nb.code || codeFrom(nb.title)), nb.title, note.notebook_id === nb.id ? h('span', { style: { marginLeft: 'auto', color: 'var(--accent)' } }, T('attuale')) : null)),
-      h('button', { onclick: () => { note.notebook_id = null; scheduleSave(true); closeSheet(); renderEditor(); } }, h('span', { class: 'nb-code', '--c': 'var(--faint)' }, '—'), T('Nessun quaderno'))),
+      h('button', { onclick: () => { noteFields({ notebook_id: null }); closeSheet(); renderEditor(); } }, h('span', { class: 'nb-code', '--c': 'var(--faint)' }, '—'), T('Nessun quaderno'))),
   ]);
 }
 
@@ -1527,6 +1589,7 @@ async function versionsSheet() {
 
 // --- quaderni ----------------------------------------------------------------
 function notebookSheet(nb) {
+  if (nb?.shared) return sharedNotebookSheet(nb);
   const isNew = !nb;
   const d = nb ? { ...nb } : { title: '', code: '', color: colorFor(store.notebooks.length), year: null, exam_date: '' };
   let codeTouched = !!d.code;
@@ -1579,6 +1642,7 @@ function notebookSheet(nb) {
     kindField,
     legendField,
     h('div', { class: 'sheet-actions' },
+      !isNew ? h('button', { class: 'btn', onclick: () => shareSheet('notebook', nb) }, T('Condividi…')) : null,
       !isNew ? h('button', { class: 'btn', style: { marginRight: 'auto' }, onclick: async () => { try { await store.updateNotebook(nb.id, { archived: !nb.archived }); closeSheet(); renderSide(); toast(nb.archived ? T('Quaderno riattivato') : T('Quaderno archiviato')); } catch (e) { toast(e.message); } } }, nb.archived ? T('Riattiva') : T('Archivia')) : null,
       !isNew ? confirmBtn(T('Elimina'), async () => { try { await store.deleteNotebook(nb.id); closeSheet(); go({ kind: 'recent' }); toast(T('Quaderno eliminato: i suoi appunti sono nel cestino')); } catch (e) { toast(e.message); } }) : null,
       h('button', { class: 'btn', onclick: closeSheet }, T('Annulla')), save),
@@ -1930,10 +1994,14 @@ store.addEventListener('change', (e) => {
   // aggiornamento arrivato da un altro dispositivo per l'appunto aperto
   if (ui.note && !saveTimer) {
     const m = store.notes.get(ui.note.id);
-    if (m && m.rev > ui.note.rev && !m._local && !document.activeElement?.matches('textarea, input')) openNote(ui.note.id);
+    if (!m || !(m.rev > ui.note.rev)) return;
+    // col live le modifiche entrano dal documento (collab.js) e il server alza la revisione a ogni salvataggio, anche del
+    // tuo: qui si annota e basta. Rileggere l'appunto ridisegnava tutto a ogni sincronizzazione (BUG-017)
+    if (live.room(m.id)?.ready) { ui.note.rev = m.rev; return; }
+    if (!m._local && penQuiet() && !document.activeElement?.matches('textarea, input')) openNote(ui.note.id);
   }
 });
-store.addEventListener('saved', (e) => { if (ui.note && ui.note.id === e.detail.id) ui.note.rev = Math.max(ui.note.rev, e.detail.rev); });
+store.addEventListener('saved', (e) => { if (ui.note && ui.note.id === e.detail.id) ui.note.rev = Math.max(ui.note.rev, e.detail.rev); collab.saved(e.detail.id); });
 store.addEventListener('conflict', () => toast(T('Appunto modificato anche da un altro dispositivo: la versione precedente è in Cronologia')));
 
 // --- popover generico (sotto o sopra il pulsante) -------------------------------------
@@ -2402,6 +2470,10 @@ renderSync();
 const me = await ensureUser();
 if (!me) throw new Error('accesso richiesto'); // la schermata di accesso è già visibile
 setLocalUser(me);
+// 2026-11-24: live, presenza e condivisione (collab.js usa le funzioni di qui; live.js apre il WebSocket)
+initCollab({ ui, boards, store, api, h, $, svg, I, prefs, toast, openSheet, closeSheet, confirmBtn, renderBlocks, renderBlock, renderEditor, renderList, renderHome, closeNote, openNote, go, penQuiet,
+  nbCode: (nb) => h('span', { class: 'nb-code', '--c': nb.color }, nb.code || codeFrom(nb.title)) });
+await live.init(me, { store, quiet: penQuiet, penDown: () => pen.down });
 addEventListener('quadretto-auth', () => { if (!document.querySelector('.auth')) showLogin({ expired: true }); });
 renderSide(); renderList(); renderEditor(); renderHome(); renderNewsBadge();
 await store.init();

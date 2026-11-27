@@ -1,6 +1,6 @@
 {
   "name": "quadretto-server",
-  "version": "2026.11.6",
+  "version": "2026.11.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,9 +14,13 @@
     "dompurify": "3.2.6",
     "fflate": "0.8.3",
     "katex": "0.16.22",
+    "lib0": "0.2.120",
     "marked": "15.0.12",
     "pdfjs-dist": "6.5.438",
     "pg": "8.16.3",
-    "pyodide": "314.0.8"
+    "pyodide": "314.0.8",
+    "ws": "8.23.0",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
   }
 }

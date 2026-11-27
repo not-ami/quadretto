@@ -1,11 +1,12 @@
 // Quadretto — service worker: l'interfaccia si apre anche senza rete.
 // I dati degli appunti li gestisce l'app (IndexedDB + coda verso il server).
-const VERSION = 'quadretto-2026.11.7'; // aggiornato da deploy.sh
+const VERSION = 'quadretto-2026.11.8'; // aggiornato da deploy.sh
 // build: 2026-11-24, multilingua (i18n.js, lang/en.js) — cambia il file, così il service worker ricarica i file anche a parità di versione
 const IMG = 'quadretto-img'; // foto e PDF sono immutabili: la loro cache sopravvive agli aggiornamenti
 const SHELL = [
   '/', '/css/app.css', '/js/app.js', '/js/auth.js', '/js/store.js', '/js/i18n.js', '/js/lang/en.js', '/js/ink.js', '/js/md.js', '/js/fmt.js', '/js/courses.js', '/js/version.js', '/js/code.js', '/js/changelog.js', '/js/py-worker.js', '/js/js-worker.js',
   '/js/motion.js', '/js/explain.js', '/js/posix-ref.js', '/js/xray.js', '/js/race.js', '/js/race-worker.js', '/js/sched.js', '/js/sim.js', '/js/charts.js', '/js/print.js', '/js/so-tools.js', '/js/so-templates.js', '/js/complete.js',
+  '/js/ydoc.js', '/js/live.js', '/js/collab.js', '/vendor/yjs/yjs.mjs',
   '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-180.png',
   '/vendor/marked/marked.umd.js', '/vendor/purify/purify.min.js', '/vendor/katex/katex.min.js', '/vendor/katex/katex.min.css',
   '/vendor/hljs/highlight.min.js', '/vendor/fflate/browser.js', '/vendor/font-display/wght.css', '/vendor/font-mono/wght.css',
@@ -26,6 +27,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname.startsWith('/l/')) return; // link in sola lettura: sempre dalla rete, mai in cache (2026-11-24)
   if (url.pathname.startsWith('/vendor/')) {
     e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((r) => { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(e.request, cp)); return r; })));
     return;

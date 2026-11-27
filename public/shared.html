@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Quadretto — in sola lettura</title>
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/vendor/font-display/wght.css">
+<link rel="stylesheet" href="/vendor/font-mono/wght.css">
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/css/app.css">
+<script src="/vendor/marked/marked.umd.js" defer></script>
+<script src="/vendor/purify/purify.min.js" defer></script>
+<script src="/vendor/katex/katex.min.js" defer></script>
+<script src="/vendor/hljs/highlight.min.js" defer></script>
+<script type="module" src="/js/shared.js"></script>
+<style>
+  /* link in sola lettura (2026-11-24): la vista di stampa del PDF, senza «Chiudi» né il resto dell'app */
+  .pv-root .pv-bar .btn:not(.primary) { display: none; }
+  .shared-msg { max-width: 34rem; margin: 18vh auto; padding: 0 1.5rem; font-family: 'Space Grotesk Variable', system-ui, sans-serif; color: var(--ink, #1c2333); }
+  .shared-msg h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+  .shared-note { position: fixed; z-index: 1000; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--panel, #fff); border: 1px solid var(--line, #d9deea); border-radius: 999px; padding: .4rem .9rem; font: 13px system-ui, sans-serif; color: var(--muted, #5b6478); box-shadow: 0 6px 20px #0002; }
+  @media print { .shared-note { display: none; } }
+</style>
+</head>
+<body>
+<div id="shared-root" class="shared-msg"><p>…</p></div>
+</body>
+</html>
