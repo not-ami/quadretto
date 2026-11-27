@@ -7,6 +7,7 @@ export const CHANGELOG = [
   {
     v: '2026.11.8', date: '2026-11-25',
     items: [
+      ['La vista panoramica non perde più quello che scrivi', 'Scrivendo nella vista panoramica la pagina non si ricarica più da sola e quello che scrivi resta salvato. Ruotando l\'iPad la scrittura resta della stessa grandezza.', 'La vista panoramica non perde più quello che scrivi'],
       ['Quadretto in italiano e in inglese', 'L\'interfaccia parla italiano o inglese: la lingua si sceglie in Impostazioni e resta nel tuo account, su tutti i dispositivi.', 'Puoi usare Quadretto in italiano o in inglese.'],
       ['Appunti in diretta su tutti i dispositivi', 'Apri lo stesso appunto sull\'iPad e sul Mac: testo, scrittura a mano, codice e strumenti arrivano sull\'altro mentre scrivi. Senza rete le modifiche restano sul dispositivo e si uniscono da sole quando torna, senza conflitti.', 'Un appunto ora si aggiorna in diretta su tutti i tuoi dispositivi.'],
       ['Chi c\'è nell\'appunto', 'In alto vedi chi ha aperto l\'appunto; nel testo e nel codice vedi dove sta scrivendo, sulla tavola compare «sta scrivendo» accanto alla sua penna. Annulla toglie solo quello che hai scritto tu.', 'Vedi chi sta scrivendo e dove.'],

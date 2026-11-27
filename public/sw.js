@@ -12,8 +12,10 @@ const SHELL = [
   '/vendor/hljs/highlight.min.js', '/vendor/fflate/browser.js', '/vendor/font-display/wght.css', '/vendor/font-mono/wght.css',
   '/js/pdfdoc.js', '/vendor/pdfjs/build/pdf.min.mjs', '/vendor/pdfjs/build/pdf.worker.min.mjs', '/vendor/pdfjs/build/pdf.renderer.min.mjs', // 2026.11.6: PDF anche offline
 ];
+// 'reload' e 'no-cache': i file di /vendor/ sono serviti come immutabili per un anno e hanno sempre lo stesso indirizzo;
+// senza, dopo un aggiornamento dei pacchetti il browser terrebbe le librerie vecchie (BUG-018, 2026-11-27).
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== IMG).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
@@ -29,7 +31,7 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.startsWith('/api/')) return;
   if (url.pathname.startsWith('/l/')) return; // link in sola lettura: sempre dalla rete, mai in cache (2026-11-24)
   if (url.pathname.startsWith('/vendor/')) {
-    e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((r) => { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(e.request, cp)); return r; })));
+    e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request, { cache: 'no-cache' }).then((r) => { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(e.request, cp)); return r; })));
     return;
   }
   // interfaccia: rete prima (aggiornamenti immediati), cache se offline

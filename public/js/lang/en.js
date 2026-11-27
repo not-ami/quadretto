@@ -1623,6 +1623,8 @@ export default {
   'L\'appunto non c\'è più': 'The note is no longer there',
 
   // --- changelog.js: 2026.11.8 ---
+  "La vista panoramica non perde più quello che scrivi": "The panoramic view no longer loses what you write",
+  "Scrivendo nella vista panoramica la pagina non si ricarica più da sola e quello che scrivi resta salvato. Ruotando l'iPad la scrittura resta della stessa grandezza.": "While you write in the panoramic view the page no longer reloads by itself, and what you write stays saved. When you rotate the iPad your handwriting keeps the same size.",
   'Quadretto in italiano e in inglese': 'Quadretto in English and Italian',
   'L\'interfaccia parla italiano o inglese: la lingua si sceglie in Impostazioni e resta nel tuo account, su tutti i dispositivi.': 'The interface speaks English or Italian: choose the language in Settings and it stays with your account, on every device.',
   'Puoi usare Quadretto in italiano o in inglese.': 'You can use Quadretto in English or Italian.',
